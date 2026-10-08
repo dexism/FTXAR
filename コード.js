@@ -1,7 +1,7 @@
 /**
  * FTXAR - Google Apps Script Server Side
- * Version: 2610082245
- * Updated: 2026-10-08T22:45:00
+ * Version: 2610082250
+ * Updated: 2026-10-08T22:50:00
  * 
  * 役割:
  * - Web App エントリポイント (doGet, doPost)
@@ -9,7 +9,7 @@
  * - サーバー時刻 (NTP同期用 UNIXミリ秒) 提供
  */
 
-const APP_VERSION = '2610082245';
+const APP_VERSION = '2610082250';
 
 /**
  * Web App 初期アクセスハンドラ
