@@ -3,9 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>FTXAR - 砲兵弾着観測WebAR [v2610082315]</title>
+    <title>FTXAR - 砲兵弾着観測WebAR [v2610082335]</title>
     <!-- Three.js (CDN) -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    
+    <!-- Material Icons Round (Google Fonts) -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
     
     <!-- スタイルシート埋め込み -->
     <style>
@@ -147,6 +150,55 @@ html, body {
     background: rgba(0, 255, 136, 0.2);
     color: var(--ftx-green);
     border: 1px solid var(--ftx-green);
+}
+
+.hud-btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 8px;
+    min-width: 38px;
+}
+
+.hud-btn-icon .material-icons-round {
+    font-size: 20px;
+    line-height: 1;
+    display: inline-block;
+}
+
+/* 左下 QR コードフローティングボタン */
+.hud-left-qr {
+    pointer-events: auto;
+    position: absolute;
+    left: 14px;
+    bottom: 14px;
+    z-index: 15;
+}
+
+.qr-icon-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+    background: rgba(16, 24, 20, 0.85);
+    border: 1px solid var(--ftx-border);
+    color: var(--ftx-green);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+    transition: all 0.15s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+.qr-icon-btn:hover {
+    border-color: var(--ftx-green);
+    box-shadow: 0 0 10px rgba(0, 255, 136, 0.4);
+}
+
+.qr-icon-btn:active {
+    background: var(--ftx-green);
+    color: #000;
 }
 
 /* 右側ズームコントロール */
@@ -555,16 +607,17 @@ html, body {
         <div class="hud-top-bar">
             <div class="hud-brand">
                 <span>FTXAR</span>
-                <span id="hud-version-text" style="font-size: 0.65em; color: #888;">v2610082315</span>
+                <span id="hud-version-text" style="font-size: 0.65em; color: #888;">v2610082335</span>
             </div>
             
             <div class="hud-btn-group">
-                <button class="hud-btn hud-btn-primary" onclick="window.FTXAR_UI.openModal('modal-mission-create')">射撃任務</button>
-                <button class="hud-btn" onclick="window.FTXAR_UI.openModal('modal-mission-list')">任務一覧</button>
-                <button class="hud-btn" onclick="window.FTXAR_UI.openModal('modal-calibration')">校正</button>
-                <button class="hud-btn active" id="btn-toggle-reticle" onclick="window.FTXAR_UI.toggleReticle()">レティクル</button>
-                <button class="hud-btn" onclick="window.FTXAR_UI.openQRModal()">QR</button>
-                <button class="hud-btn stream-error" id="btn-start-camera" onclick="window.FTXAR_UI.requestCamera()">📷 カメラ</button>
+                <button class="hud-btn hud-btn-primary" onclick="window.FTXAR_UI.openModal('modal-mission-create')">要求</button>
+                <button class="hud-btn" onclick="window.FTXAR_UI.openModal('modal-mission-list')">任務</button>
+                <button class="hud-btn" onclick="window.FTXAR_UI.openModal('modal-calibration')">規正</button>
+                <button class="hud-btn active" id="btn-toggle-reticle" onclick="window.FTXAR_UI.toggleReticle()">レチクル</button>
+                <button class="hud-btn hud-btn-icon stream-error" id="btn-start-camera" onclick="window.FTXAR_UI.requestCamera()" title="カメラ切り替え / 起動">
+                    <span class="material-icons-round">photo_camera</span>
+                </button>
             </div>
         </div>
 
@@ -572,7 +625,7 @@ html, body {
         <div id="camera-status-banner">
             <div id="camera-banner-text">カメラのアクセスを待機中...</div>
             <div class="banner-actions">
-                <button class="banner-btn" onclick="window.FTXAR_UI.requestCamera()">📷 再試行</button>
+                <button class="banner-btn" onclick="window.FTXAR_UI.requestCamera()">カメラ再試行</button>
             </div>
         </div>
 
@@ -594,6 +647,13 @@ html, body {
                 <span id="hud-elevation-info">仰角: +000 mil</span>
                 <span id="hud-wind-info">風向: --° --m/s</span>
             </div>
+        </div>
+        
+        <!-- 左下 QR コード共有アイコンボタン -->
+        <div class="hud-left-qr">
+            <button class="qr-icon-btn" onclick="window.FTXAR_UI.openQRModal()" title="共有QRコードを表示">
+                <span class="material-icons-round" style="font-size: 26px;">qr_code_2</span>
+            </button>
         </div>
     </div>
 
@@ -3200,7 +3260,7 @@ html, body {
     (function(window) {
         'use strict';
 
-        var APP_VERSION = '2610082315';
+        var APP_VERSION = '2610082335';
 
         // アプリケーション全体状態
         var appState = {
@@ -3647,14 +3707,16 @@ html, body {
 
             if (isActive) {
                 if (camBtn) {
-                    camBtn.className = 'hud-btn active-stream';
-                    camBtn.innerText = '📷 接続中';
+                    camBtn.className = 'hud-btn hud-btn-icon active-stream';
+                    camBtn.innerHTML = '<span class="material-icons-round">photo_camera</span>';
+                    camBtn.title = 'カメラ: 接続中';
                 }
                 if (banner) banner.style.display = 'none';
             } else {
                 if (camBtn) {
-                    camBtn.className = 'hud-btn stream-error';
-                    camBtn.innerText = '📷 カメラ起動';
+                    camBtn.className = 'hud-btn hud-btn-icon stream-error';
+                    camBtn.innerHTML = '<span class="material-icons-round">no_photography</span>';
+                    camBtn.title = 'カメラ: 未接続 (タップして起動)';
                 }
                 if (banner && bannerText) {
                     banner.style.display = 'block';

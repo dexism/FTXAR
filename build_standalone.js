@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT_DIR = 'c:/dev/FTXAR';
-const VERSION = '2610082315';
+const VERSION = '2610082335';
 
 console.log('Building standalone WebAR HTML package for Standalone & GitHub Pages...');
 

@@ -7,6 +7,9 @@
     <!-- Three.js (CDN) -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
     
+    <!-- Material Icons Round (Google Fonts) -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    
     <!-- スタイルシート埋め込み -->
     <?!= include('style'); ?>
 </head>
@@ -31,12 +34,13 @@
             </div>
             
             <div class="hud-btn-group">
-                <button class="hud-btn hud-btn-primary" onclick="window.FTXAR_UI.openModal('modal-mission-create')">射撃任務</button>
-                <button class="hud-btn" onclick="window.FTXAR_UI.openModal('modal-mission-list')">任務一覧</button>
-                <button class="hud-btn" onclick="window.FTXAR_UI.openModal('modal-calibration')">校正</button>
-                <button class="hud-btn active" id="btn-toggle-reticle" onclick="window.FTXAR_UI.toggleReticle()">レティクル</button>
-                <button class="hud-btn" onclick="window.FTXAR_UI.openQRModal()">QR</button>
-                <button class="hud-btn stream-error" id="btn-start-camera" onclick="window.FTXAR_UI.requestCamera()">📷 カメラ</button>
+                <button class="hud-btn hud-btn-primary" onclick="window.FTXAR_UI.openModal('modal-mission-create')">要求</button>
+                <button class="hud-btn" onclick="window.FTXAR_UI.openModal('modal-mission-list')">任務</button>
+                <button class="hud-btn" onclick="window.FTXAR_UI.openModal('modal-calibration')">規正</button>
+                <button class="hud-btn active" id="btn-toggle-reticle" onclick="window.FTXAR_UI.toggleReticle()">レチクル</button>
+                <button class="hud-btn hud-btn-icon stream-error" id="btn-start-camera" onclick="window.FTXAR_UI.requestCamera()" title="カメラ切り替え / 起動">
+                    <span class="material-icons-round">photo_camera</span>
+                </button>
             </div>
         </div>
 
@@ -44,7 +48,7 @@
         <div id="camera-status-banner">
             <div id="camera-banner-text">カメラのアクセスを待機中...</div>
             <div class="banner-actions">
-                <button class="banner-btn" onclick="window.FTXAR_UI.requestCamera()">📷 再試行</button>
+                <button class="banner-btn" onclick="window.FTXAR_UI.requestCamera()">カメラ再試行</button>
             </div>
         </div>
 
@@ -66,6 +70,13 @@
                 <span id="hud-elevation-info">仰角: +000 mil</span>
                 <span id="hud-wind-info">風向: --° --m/s</span>
             </div>
+        </div>
+        
+        <!-- 左下 QR コード共有アイコンボタン -->
+        <div class="hud-left-qr">
+            <button class="qr-icon-btn" onclick="window.FTXAR_UI.openQRModal()" title="共有QRコードを表示">
+                <span class="material-icons-round" style="font-size: 26px;">qr_code_2</span>
+            </button>
         </div>
     </div>
 
@@ -544,14 +555,16 @@
 
             if (isActive) {
                 if (camBtn) {
-                    camBtn.className = 'hud-btn active-stream';
-                    camBtn.innerText = '📷 接続中';
+                    camBtn.className = 'hud-btn hud-btn-icon active-stream';
+                    camBtn.innerHTML = '<span class="material-icons-round">photo_camera</span>';
+                    camBtn.title = 'カメラ: 接続中';
                 }
                 if (banner) banner.style.display = 'none';
             } else {
                 if (camBtn) {
-                    camBtn.className = 'hud-btn stream-error';
-                    camBtn.innerText = '📷 カメラ起動';
+                    camBtn.className = 'hud-btn hud-btn-icon stream-error';
+                    camBtn.innerHTML = '<span class="material-icons-round">no_photography</span>';
+                    camBtn.title = 'カメラ: 未接続 (タップして起動)';
                 }
                 if (banner && bannerText) {
                     banner.style.display = 'block';
