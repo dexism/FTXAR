@@ -1,0 +1,204 @@
+<!-- FTXAR: Mission Manager & Modals (mission_manager.html) -->
+<!-- Version: 2610082045 -->
+
+<!-- 1. 射撃任務 設定モーダル -->
+<div id="modal-mission-create" class="ftx-modal" style="display: none;">
+    <div class="ftx-modal-content">
+        <div class="ftx-modal-header">
+            <span class="ftx-modal-title">新規 射撃任務 (Fire Mission) 発令</span>
+            <button class="ftx-modal-close" onclick="window.FTXAR_UI.closeModals()">✕</button>
+        </div>
+        <div class="ftx-modal-body">
+            <div class="ftx-form-group">
+                <label>任務名称</label>
+                <input type="text" id="fm-input-title" value="第1射撃任務 (155mm 各個効力射)">
+            </div>
+            
+            <div class="ftx-form-row">
+                <div class="ftx-form-group half">
+                    <label>目標方位角 (ミル)</label>
+                    <input type="number" id="fm-input-bearing" value="0" min="0" max="6400">
+                </div>
+                <div class="ftx-form-group half">
+                    <label>目標距離 (m)</label>
+                    <input type="number" id="fm-input-distance" value="200" min="50" max="25000">
+                </div>
+            </div>
+
+            <div class="ftx-form-row">
+                <div class="ftx-form-group half">
+                    <label>弾種</label>
+                    <select id="fm-input-ammo">
+                        <option value="155HE" selected>155mm HE (榴弾)</option>
+                        <option value="120HE">120mm HE (迫撃砲弾)</option>
+                        <option value="155SMK">155mm SMK (煙幕弾)</option>
+                    </select>
+                </div>
+                <div class="ftx-form-group half">
+                    <label>信管</label>
+                    <select id="fm-input-fuse" onchange="window.FTXAR_UI.onFuseChange()">
+                        <option value="CVT" selected>CVT (接近曳火)</option>
+                        <option value="Q">Q (瞬発)</option>
+                        <option value="Ti">Ti (時限曳火)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="ftx-form-row" id="row-burst-height">
+                <div class="ftx-form-group half">
+                    <label>基準破裂高 (m)</label>
+                    <input type="number" id="fm-input-burst-height" value="7.0" step="0.5">
+                </div>
+                <div class="ftx-form-group half">
+                    <label>破裂高公差 (±m)</label>
+                    <input type="number" id="fm-input-burst-jitter" value="2.0" step="0.5">
+                </div>
+            </div>
+
+            <div class="ftx-form-row">
+                <div class="ftx-form-group half">
+                    <label>門数 (門)</label>
+                    <input type="number" id="fm-input-guns" value="5" min="1" max="8">
+                </div>
+                <div class="ftx-form-group half">
+                    <label>射向束幅 (m)</label>
+                    <input type="number" id="fm-input-sheaf" value="45.0" step="1">
+                </div>
+            </div>
+
+            <div class="ftx-form-row">
+                <div class="ftx-form-group half">
+                    <label>長軸方位角 (ミル)</label>
+                    <input type="number" id="fm-input-axis" value="800" min="0" max="6400">
+                </div>
+                <div class="ftx-form-group half">
+                    <label>弾着角 (ミル)</label>
+                    <input type="number" id="fm-input-angle" value="800" min="100" max="1400">
+                </div>
+            </div>
+
+            <div class="ftx-form-row">
+                <div class="ftx-form-group half">
+                    <label>PER (射距離公算誤差 m)</label>
+                    <input type="number" id="fm-input-per" value="25.0" step="1">
+                </div>
+                <div class="ftx-form-group half">
+                    <label>PED (方向公算誤差 m)</label>
+                    <input type="number" id="fm-input-ped" value="3.0" step="0.5">
+                </div>
+            </div>
+
+            <div class="ftx-form-row">
+                <div class="ftx-form-group half">
+                    <label>発射間隔 (秒)</label>
+                    <input type="number" id="fm-input-interval" value="12.0" min="3" max="60">
+                </div>
+                <div class="ftx-form-group half">
+                    <label>発射間隔ジッター (±秒)</label>
+                    <input type="number" id="fm-input-interval-jitter" value="3.0" min="0" max="10">
+                </div>
+            </div>
+
+            <div class="ftx-form-group">
+                <label>発射弾数 (斉射回数)</label>
+                <select id="fm-input-rounds">
+                    <option value="-1" selected>無制限 (継続効力射)</option>
+                    <option value="1">1斉射 (初弾効力射)</option>
+                    <option value="3">3斉射</option>
+                    <option value="5">5斉射</option>
+                    <option value="10">10斉射</option>
+                </select>
+            </div>
+        </div>
+        <div class="ftx-modal-footer">
+            <button class="ftx-btn-secondary" onclick="window.FTXAR_UI.resetToDefaultForm()">デフォルト値</button>
+            <button class="ftx-btn-primary" onclick="window.FTXAR_UI.submitFireMission()">射撃命令 発動</button>
+        </div>
+    </div>
+</div>
+
+<!-- 2. 射撃任務 一覧モーダル -->
+<div id="modal-mission-list" class="ftx-modal" style="display: none;">
+    <div class="ftx-modal-content">
+        <div class="ftx-modal-header">
+            <span class="ftx-modal-title">射撃任務 一覧 & 統制</span>
+            <button class="ftx-modal-close" onclick="window.FTXAR_UI.closeModals()">✕</button>
+        </div>
+        <div class="ftx-modal-body" id="mission-list-container">
+            <div style="text-align: center; color: #888; padding: 20px;">任務を読み込み中...</div>
+        </div>
+        <div class="ftx-modal-footer">
+            <button class="ftx-btn-secondary" onclick="window.FTXAR_UI.openModal('modal-mission-create')">+ 新規任務</button>
+            <button class="ftx-btn-primary" onclick="window.FTXAR_UI.closeModals()">閉じる</button>
+        </div>
+    </div>
+</div>
+
+<!-- 3. 電子コンパス キャリブレーション モーダル -->
+<div id="modal-calibration" class="ftx-modal" style="display: none;">
+    <div class="ftx-modal-content">
+        <div class="ftx-modal-header">
+            <span class="ftx-modal-title">電子コンパス 多重校正 (Calibration)</span>
+            <button class="ftx-modal-close" onclick="window.FTXAR_UI.closeModals()">✕</button>
+        </div>
+        <div class="ftx-modal-body">
+            <p style="font-size: 0.85em; color: #bbb; margin-bottom: 12px;">
+                照準レティクルを校正基準（天体または名山）に向け、「校正実行」をタップしてください。
+            </p>
+            <div class="ftx-form-group">
+                <label>校正基準の選択</label>
+                <select id="cal-target-select" onchange="window.FTXAR_UI.onCalTargetChange()">
+                    <option value="sun">太陽 (Sun)</option>
+                    <option value="moon">月 (Moon)</option>
+                    <option value="polaris">北極星 (Polaris / 真北)</option>
+                    <optgroup label="著明な山 (名峰)">
+                        <option value="mt_0">富士山 (剣ヶ峰)</option>
+                        <option value="mt_1">大山 (鳥取県)</option>
+                        <option value="mt_2">阿蘇山 (中岳)</option>
+                        <option value="mt_3">由布岳</option>
+                        <option value="mt_4">乗鞍岳</option>
+                        <option value="mt_5">槍ヶ岳</option>
+                        <option value="mt_6">鳥海山</option>
+                        <option value="mt_7">岩手山</option>
+                        <option value="mt_8">羊蹄山</option>
+                        <option value="mt_10">筑波山</option>
+                        <option value="mt_11">箱根山</option>
+                    </optgroup>
+                </select>
+            </div>
+
+            <div class="ftx-cal-info-box">
+                <div class="cal-row"><span>基準の理論方位:</span> <strong id="cal-ref-bearing">-- mil</strong></div>
+                <div class="cal-row"><span>基準の理論仰角:</span> <strong id="cal-ref-elevation">-- mil</strong></div>
+                <div class="cal-row"><span>現在の端末方位:</span> <strong id="cal-cur-bearing">-- mil</strong></div>
+                <div class="cal-row"><span>適用中オフセット:</span> <strong id="cal-cur-offset">0.0°</strong></div>
+            </div>
+        </div>
+        <div class="ftx-modal-footer">
+            <button class="ftx-btn-secondary" onclick="window.FTXAR_UI.resetCompassCalibration()">リセット</button>
+            <button class="ftx-btn-primary" onclick="window.FTXAR_UI.executeCalibration()">校正 実行</button>
+        </div>
+    </div>
+</div>
+
+<!-- 4. QRコード 共有モーダル -->
+<div id="modal-qr" class="ftx-modal" style="display: none;">
+    <div class="ftx-modal-content" style="text-align: center;">
+        <div class="ftx-modal-header">
+            <span class="ftx-modal-title">QRコード URL共有</span>
+            <button class="ftx-modal-close" onclick="window.FTXAR_UI.closeModals()">✕</button>
+        </div>
+        <div class="ftx-modal-body" style="padding: 20px 10px;">
+            <p style="font-size: 0.85em; color: #bbb; margin-bottom: 15px;">
+                他のスマートフォンでスキャンすると、同一の射撃任務・弾着アニメーションを完全に同期して観測できます。
+            </p>
+            <div id="qr-code-display" style="display: flex; justify-content: center; margin-bottom: 15px;">
+                <img id="qr-image" src="" alt="QR Code" style="width: 200px; height: 200px; border-radius: 8px; border: 2px solid #00ff88; background: #fff; padding: 8px;">
+            </div>
+            <input type="text" id="qr-url-text" readonly style="width: 90%; background: #222; color: #00ff88; border: 1px solid #444; border-radius: 4px; padding: 6px; font-family: monospace; font-size: 0.8em; text-align: center;">
+        </div>
+        <div class="ftx-modal-footer">
+            <button class="ftx-btn-primary" onclick="window.FTXAR_UI.copyShareUrl()">URLコピー</button>
+        </div>
+    </div>
+</div>

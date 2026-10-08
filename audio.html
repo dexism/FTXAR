@@ -1,0 +1,179 @@
+<script>
+/**
+ * FTXAR - Spatial Audio Engine (audio.html)
+ * Version: 2610082015
+ * 
+ * kansokun準拠 Web Audio API 空間音響
+ * - 340m/s 音速伝播遅延
+ * - 地形遮蔽 (Non-LOS) による低音回折ローパスフィルタ (280Hz)
+ * - 距離減衰 (Inverse Square Law)
+ * - プロシージャル爆発音合成 (外部音声ファイル不要・完全自立)
+ */
+
+(function(window) {
+    'use strict';
+
+    let audioCtx = null;
+    let masterGain = null;
+    let isUnlocked = false;
+
+    /**
+     * Web Audio Context の初期化・ロック解除 (ユーザー操作イベントで発火)
+     */
+    function initAudio() {
+        if (audioCtx) {
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            return;
+        }
+
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+
+        audioCtx = new AudioContextClass();
+        masterGain = audioCtx.createGain();
+        masterGain.gain.setValueAtTime(0.7, audioCtx.currentTime);
+        masterGain.connect(audioCtx.destination);
+        isUnlocked = true;
+        console.info("FTXAR Audio: Context initialized & unlocked.");
+    }
+
+    /**
+     * ノイズバッファの生成 (爆発の砂嵐・轟音用)
+     */
+    let noiseBuffer = null;
+    function getNoiseBuffer() {
+        if (!noiseBuffer && audioCtx) {
+            const bufSize = audioCtx.sampleRate * 2.5; // 2.5秒ノイズ
+            noiseBuffer = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+            const data = noiseBuffer.getChannelData(0);
+            for (let i = 0; i < bufSize; i++) {
+                data[i] = Math.random() * 2.0 - 1.0;
+            }
+        }
+        return noiseBuffer;
+    }
+
+    /**
+     * 弾着爆発音のスケジューリング再生
+     * 
+     * @param {Object} eyePos 観測者座標 {x, y, z}
+     * @param {Object} impactPos 着弾座標 {x, y, z}
+     * @param {boolean} isLOS 直達見通しフラグ (true: 見通し良好, false: 地形遮蔽あり)
+     * @param {number} scheduledImpactTime 絶対着弾時刻 (UNIX ms)
+     */
+    function scheduleImpactSound(eyePos, impactPos, isLOS, scheduledImpactTime) {
+        if (!audioCtx) initAudio();
+        if (!audioCtx) return;
+
+        // 3次元直線距離 (m)
+        const dx = impactPos.x - eyePos.x;
+        const dy = impactPos.y - eyePos.y;
+        const dz = impactPos.z - eyePos.z;
+        const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+        // 音速 (340 m/s) による物理遅延 (秒)
+        const soundDelaySec = distance / 340.0;
+
+        // 現在の絶対時刻 (NTP補正済み) から再生発火時刻を計算
+        const nowMs = Date.now();
+        const arrivalTimeMs = scheduledImpactTime + (soundDelaySec * 1000.0);
+        const waitMs = Math.max(0, arrivalTimeMs - nowMs);
+
+        setTimeout(function() {
+            playExplosionSynthesized(distance, isLOS);
+        }, waitMs);
+    }
+
+    /**
+     * 合成爆発音の再生
+     * 
+     * @param {number} distance 距離 (m)
+     * @param {boolean} isLOS 直達見通し有無
+     */
+    function playExplosionSynthesized(distance, isLOS) {
+        if (!audioCtx || audioCtx.state === 'suspended') return;
+
+        const t0 = audioCtx.currentTime;
+
+        // 距離による音量減衰 (10m基準の逆二乗則近似)
+        // 200m: 約0.35, 1000m: 約0.12, 3000m: 約0.04
+        const distGainVal = Math.max(0.02, Math.min(1.0, 35.0 / Math.max(10.0, distance)));
+
+        // 遮蔽されている場合はさらに音圧が約50%低下
+        const finalGainVal = isLOS ? distGainVal : (distGainVal * 0.45);
+
+        // 1. 低周波爆風オシレータ (サブベース衝撃波)
+        const osc = audioCtx.createOscillator();
+        const oscGain = audioCtx.createGain();
+
+        // 155mm榴弾の重低音ピッチエンベロープ (130Hz -> 30Hz)
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(130.0, t0);
+        osc.frequency.exponentialRampToValueAtTime(32.0, t0 + 0.45);
+
+        oscGain.gain.setValueAtTime(0.001, t0);
+        oscGain.gain.linearRampToValueAtTime(finalGainVal * 1.2, t0 + 0.02);
+        oscGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.2);
+
+        osc.connect(oscGain);
+
+        // 2. 轟音・破裂ノイズソース
+        const noiseBuf = getNoiseBuffer();
+        let noiseSource = null;
+        const noiseGain = audioCtx.createGain();
+
+        if (noiseBuf) {
+            noiseSource = audioCtx.createBufferSource();
+            noiseSource.buffer = noiseBuf;
+
+            noiseGain.gain.setValueAtTime(0.001, t0);
+            noiseGain.gain.linearRampToValueAtTime(finalGainVal * 0.9, t0 + 0.015);
+            noiseGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.8);
+        }
+
+        // 3. 【核心】地形遮蔽(Non-LOS)フィルター
+        // 遮蔽時は280Hzローパスで高周波の炸裂音を完全遮断、低音の地響きのみが山を回折する
+        const filter = audioCtx.createBiquadFilter();
+        if (isLOS) {
+            // 見通し可: 高域のキレのある破裂音 (1800Hz ローパス)
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(1800, t0);
+            filter.frequency.exponentialRampToValueAtTime(400, t0 + 1.5);
+            filter.Q.value = 1.2;
+        } else {
+            // 地形遮蔽 (Non-LOS): 重低音回折音のみ (280Hz 固定ローパス)
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(280, t0);
+            filter.frequency.linearRampToValueAtTime(150, t0 + 1.5);
+            filter.Q.value = 2.0; // 低域ブースト
+        }
+
+        oscGain.connect(filter);
+        if (noiseSource) {
+            noiseSource.connect(noiseGain);
+            noiseGain.connect(filter);
+        }
+
+        filter.connect(masterGain);
+
+        osc.start(t0);
+        osc.stop(t0 + 1.3);
+
+        if (noiseSource) {
+            noiseSource.start(t0);
+            noiseSource.stop(t0 + 2.0);
+        }
+    }
+
+    // グローバル公開
+    window.FTXAR_AUDIO = {
+        initAudio: initAudio,
+        resumeAudio: initAudio,
+        scheduleImpactSound: scheduleImpactSound,
+        playExplosionSynthesized: playExplosionSynthesized
+    };
+
+})(window);
+</script>

@@ -1,0 +1,678 @@
+<script>
+/**
+ * FTXAR - Impact Effects & Particle Engine (effects.html)
+ * Version: 2610082125
+ * 
+ * かんそくん本体 (v4 engine_effects.js) 完全準拠 砲兵弾着アニメーション
+ * 
+ * 【重要方針】
+ * - 「終末弾道.html」の爆風（ワイヤーフレーム球体・衝撃波ドーム・単一巨大球体メッシュ）は完全排除
+ * - かんそくん本体の矩形ビルボード（単色クアッド・面内回転）幾何学的パーティクル集約システムを忠実再現
+ * 
+ * 1. 共通火球 (isAirburstFireball): 10パーツ球形敷き詰め (中心コア3個 + 外殻7個/火の粉3個)
+ *    - 冷却指数 Ei = exp(-t / tau)
+ *    - 白熱芯(0.05s) -> 純橙色(0.15s) -> 鮮烈赤橙色(0.25s) -> 炭化漆黒(0.75-0.85s) + 火の粉点滅(1.30s)
+ * 2. 曳火空中破裂 (CVT / Ti Airburst):
+ *    - 副煙 (isAirburstSecondarySmoke): 20パーツ円錐形 (作動点最大半径 -> 進行方向に先細り), 灰色, 4.5-5.0s
+ *    - 主煙 (isAirburstMainSmoke): 20パーツ水平ドーナツ型, 黒色, 4.5-5.0s, 0.25s高エネルギー閃光照射
+ *    - 地表弾足 (debris): 破裂高 < 30m で地表から10-40パーツ白煙吹き上がり, 2.0-2.5s
+ * 3. 着発地表破裂 (Q Point Detonating):
+ *    - 爆発土煙 (isGroundDirtSmoke): 40パーツ, 3D初速+空気抵抗ドラッグ(k=4.5)+重力(0.5G)放物線運動
+ *      最大水平10m, 最大高度15m, 爆心0.15s純白->暗灰色, 0.8-1.5s
+ *    - 着発主煙 (isGroundMainSmoke): 24パーツ, 0.3s遅延発生, 半径1.5-7.5m, 黒-深灰色, 5.0s
+ *    - 地表弾足 (debris)
+ * 4. 風向風速 (Open-Meteo) による煙の自然流動および固有上昇 (1.0 m/s)
+ */
+
+(function(window) {
+    'use strict';
+
+    var activeEffects = [];
+
+    // 共通の1m四方正方形Planeジオメトリ (かんそくんの tgtVBuf [-0.5, -0.5, 0 ...] と同等)
+    var sharedQuadGeometry = null;
+    function getSharedQuadGeometry() {
+        if (!sharedQuadGeometry && typeof THREE !== 'undefined') {
+            sharedQuadGeometry = new THREE.PlaneGeometry(1.0, 1.0);
+        }
+        return sharedQuadGeometry;
+    }
+
+    /**
+     * 単色ビルボードメッシュの生成ヘルパー
+     */
+    function createBillboardMesh(colorHex, opacity, blending) {
+        var mat = new THREE.MeshBasicMaterial({
+            color: colorHex,
+            transparent: true,
+            opacity: opacity !== undefined ? opacity : 1.0,
+            side: THREE.DoubleSide,
+            depthTest: true,
+            depthWrite: false,
+            blending: blending || THREE.NormalBlending
+        });
+        var mesh = new THREE.Mesh(getSharedQuadGeometry(), mat);
+        return mesh;
+    }
+
+    /**
+     * 弾着エフェクトの発火 (一元統合エントリポイント)
+     * 
+     * @param {THREE.Scene} scene
+     * @param {Object} impact 着弾諸元 { position, groundY, burstHeight, fuse, ammo }
+     * @param {Object} [weatherData] 気象データ
+     */
+    function triggerImpact(scene, impact, weatherData) {
+        if (!scene || typeof THREE === 'undefined') return;
+
+        var pos = impact.position;
+        var groundY = (impact.groundY !== undefined) ? impact.groundY : (pos.y - 7.0);
+        var hob = Math.max(0, pos.y - groundY);
+        var isAirburst = (impact.fuse === 'CVT' || impact.fuse === 'Ti' || hob > 0.5);
+
+        // 口径スケール (155mm基準=1.1倍)
+        var calScale = 1.1;
+
+        // 風ベクトル (m/s)
+        var windVec = { x: 1.5, z: 1.5 };
+        if (weatherData && weatherData.windSpeed !== undefined && weatherData.windDirection !== undefined) {
+            // 気象風向（吹いてくる方角）から風下へのベクトル
+            var rad = (weatherData.windDirection + 180.0) * (Math.PI / 180.0);
+            windVec.x = Math.sin(rad) * weatherData.windSpeed * 0.4;
+            windVec.z = -Math.cos(rad) * weatherData.windSpeed * 0.4;
+        }
+
+        // 煙上昇速度 (m/s)
+        var riseSpeed = 1.0;
+
+        var effectGroup = new THREE.Group();
+        effectGroup.position.set(pos.x, pos.y, pos.z);
+        scene.add(effectGroup);
+
+        var startTime = performance.now();
+        var components = [];
+
+        // ========================================================
+        // 1. 火球 (Fireball) - 曳火・着発共通 (10パーツ球形敷き詰め)
+        // ========================================================
+        var fireballParticles = [];
+        var sphereRadius = 1.10 * calScale;
+
+        for (var i = 0; i < 10; i++) {
+            var isCore = (i < 3);
+            var isEmber = (i >= 7);
+            var rNorm, baseSize;
+
+            if (isCore) {
+                rNorm = Math.random() * 0.20;
+                baseSize = 1.30 * calScale;
+            } else {
+                rNorm = 0.30 + Math.random() * 0.55;
+                baseSize = 0.85 * calScale;
+            }
+
+            var theta = Math.random() * Math.PI * 2.0;
+            var phi = Math.acos(2.0 * Math.random() - 1.0);
+            var r = rNorm * sphereRadius;
+
+            var dx = r * Math.sin(phi) * Math.cos(theta);
+            var dy = r * Math.sin(phi) * Math.sin(theta);
+            var dz = r * Math.cos(phi);
+
+            var lifeSpan = isEmber ? (1.20 + Math.random() * 0.10) : (0.75 + Math.random() * 0.10);
+            var rotAngle = Math.random() * (Math.PI * 0.5);
+
+            var mesh = createBillboardMesh(0xffffff, 1.0);
+            mesh.position.set(dx, dy, dz);
+            effectGroup.add(mesh);
+
+            fireballParticles.push({
+                mesh: mesh,
+                dx: dx, dy: dy, dz: dz,
+                rNorm: rNorm,
+                baseSize: baseSize,
+                isCore: isCore,
+                isEmber: isEmber,
+                lifeSpan: lifeSpan,
+                rotAngle: rotAngle
+            });
+        }
+
+        components.push({
+            type: 'fireball',
+            particles: fireballParticles,
+            maxDuration: 1.35,
+            update: function(t, camera) {
+                for (var j = 0; j < this.particles.length; j++) {
+                    var p = this.particles[j];
+                    if (t > p.lifeSpan) {
+                        p.mesh.visible = false;
+                        continue;
+                    }
+                    p.mesh.visible = true;
+
+                    // サイズ計算
+                    var szCur = p.baseSize;
+                    if (p.isEmber) {
+                        var expandE = (t <= 0.05) ? (t / 0.05) : 1.0;
+                        var shrinkE = Math.max(0.20, 1.0 - 0.80 * (t / p.lifeSpan));
+                        szCur = p.baseSize * expandE * shrinkE;
+                    } else {
+                        var expand = (t <= 0.06) ? (t / 0.06) : 1.0;
+                        szCur = p.baseSize * expand;
+                    }
+                    p.mesh.scale.set(szCur, szCur, 1.0);
+
+                    // ビルボード回転 (カメラ向き + 面内回転)
+                    p.mesh.quaternion.copy(camera.quaternion);
+                    p.mesh.rotateZ(p.rotAngle);
+
+                    // 冷却指数 Ei
+                    var tau = p.isEmber ? 0.45 : (0.12 * Math.max(0.2, 1.0 - 0.5 * p.rNorm));
+                    var Ei = Math.exp(-t / tau);
+
+                    var rVal = 1.0, gVal = 0.5, bVal = 0.0, alphaVal = 1.0;
+
+                    if (p.rNorm <= 0.15 && t <= 0.05 && Ei > 0.80) {
+                        // 1. 最高温白熱芯 (黄金色〜純白)
+                        rVal = 1.0; gVal = 0.95; bVal = 0.70; alphaVal = 1.0;
+                    } else if (Ei > 0.55 && t <= 0.15) {
+                        // 2. 高エネルギー期 (純橙色)
+                        var k1 = (Ei - 0.55) / 0.45;
+                        rVal = 1.0; gVal = 0.28 + 0.18 * k1; bVal = 0.0; alphaVal = 1.0;
+                    } else if (Ei > 0.18 && t <= 0.25) {
+                        // 3. 主発光期 (鮮烈赤橙色)
+                        var k2 = (Ei - 0.18) / 0.37;
+                        rVal = 1.0; gVal = 0.08 + 0.20 * k2; bVal = 0.0; alphaVal = 0.95 + 0.05 * k2;
+                    } else if (p.isEmber) {
+                        // 4. 火の粉 (赤橙点滅)
+                        var remE = Math.max(0.0, (p.lifeSpan - t) / (p.lifeSpan * 0.65));
+                        var flicker = 0.85 + 0.15 * Math.sin(t * 35.0 + j);
+                        rVal = 0.95 * flicker;
+                        gVal = (0.04 + 0.10 * Ei) * flicker;
+                        bVal = 0.0;
+                        alphaVal = Math.min(1.0, remE * 1.3);
+                    } else {
+                        // 5. 炭化パーツ (漆黒の炭化塊)
+                        rVal = 0.02; gVal = 0.02; bVal = 0.02;
+                        var carbonAlpha = 0.85;
+                        if (t > 0.45) {
+                            carbonAlpha = Math.max(0.0, 0.85 * (p.lifeSpan - t) / Math.max(0.05, (p.lifeSpan - 0.45)));
+                        }
+                        alphaVal = carbonAlpha;
+                    }
+
+                    p.mesh.material.color.setRGB(rVal, gVal, bVal);
+                    p.mesh.material.opacity = alphaVal;
+                }
+            }
+        });
+
+        if (isAirburst) {
+            // ========================================================
+            // 2A. 曳火: 副煙 (isAirburstSecondarySmoke) - 20パーツ円錐形
+            // ========================================================
+            var secParticles = [];
+            // 進行方向単位ベクトル u (標準は斜め下向き)
+            var u = { x: 0.0, y: -0.8, z: 0.2 };
+            var uLen = Math.hypot(u.x, u.y, u.z) || 1.0;
+            u.x /= uLen; u.y /= uLen; u.z /= uLen;
+
+            // 法線平面ベクトル n1, n2
+            var n1 = { x: 1.0, y: 0.0, z: 0.0 };
+            var n2 = { x: 0.0, y: -u.z, z: u.y };
+
+            for (var sIdx = 0; sIdx < 20; sIdx++) {
+                var sRatio = Math.random() * 0.95 + 0.05;
+                var rInit = (1.0 - sRatio) * 1.05 * calScale;
+                var rFinal = (1.0 - sRatio) * 1.20 * calScale;
+                var hInit = sRatio * 2.535 * calScale;
+                var hFinal = sRatio * 2.925 * calScale;
+                var phiAngle = Math.random() * Math.PI * 2.0;
+                var szInit = (0.30 + Math.random() * 0.30) * calScale;
+                var szFinal = szInit * 1.25;
+                var colVal = 0.20 + Math.random() * 0.30;
+                var rNormSec = Math.min(1.0, Math.hypot(hInit, rInit) / (2.925 * calScale));
+                var secLife = 5.00 - Math.random() * 0.50;
+                var secRot = Math.random() * (Math.PI * 0.5);
+
+                var sMesh = createBillboardMesh(0x555555, 0.7);
+                effectGroup.add(sMesh);
+
+                secParticles.push({
+                    mesh: sMesh,
+                    rInit: rInit, rFinal: rFinal,
+                    hInit: hInit, hFinal: hFinal,
+                    phi: phiAngle,
+                    szInit: szInit, szFinal: szFinal,
+                    colVal: colVal,
+                    rNorm: rNormSec,
+                    lifeSpan: secLife,
+                    rotAngle: secRot
+                });
+            }
+
+            components.push({
+                type: 'airburst_secondary',
+                particles: secParticles,
+                maxDuration: 5.0,
+                update: function(t, camera) {
+                    if (t > this.maxDuration + 0.5) return;
+                    var progress = Math.min(1.0, t / this.maxDuration);
+                    var windDx = windVec.x * t;
+                    var windDz = windVec.z * t;
+                    var riseDy = riseSpeed * t;
+
+                    for (var k = 0; k < this.particles.length; k++) {
+                        var sp = this.particles[k];
+                        if (t > sp.lifeSpan) {
+                            sp.mesh.visible = false;
+                            continue;
+                        }
+                        sp.mesh.visible = true;
+
+                        var rCur = sp.rInit + (sp.rFinal - sp.rInit) * progress;
+                        var hCur = sp.hInit + (sp.hFinal - sp.hInit) * progress;
+                        var szCur = sp.szInit + (sp.szFinal - sp.szInit) * progress;
+
+                        var axisX = hCur * u.x;
+                        var axisY = hCur * u.y + riseDy;
+                        var axisZ = hCur * u.z;
+
+                        var px = axisX + rCur * (Math.cos(sp.phi) * n1.x + Math.sin(sp.phi) * n2.x) + windDx;
+                        var py = axisY + rCur * (Math.cos(sp.phi) * n1.y + Math.sin(sp.phi) * n2.y);
+                        var pz = axisZ + rCur * (Math.cos(sp.phi) * n1.z + Math.sin(sp.phi) * n2.z) + windDz;
+
+                        sp.mesh.position.set(px, py, pz);
+                        sp.mesh.scale.set(szCur, szCur, 1.0);
+                        sp.mesh.quaternion.copy(camera.quaternion);
+                        sp.mesh.rotateZ(sp.rotAngle);
+
+                        // 閃光照射
+                        var distFactor = Math.max(0.0, 1.0 - sp.rNorm) * Math.max(0.0, 1.0 - sp.rNorm);
+                        var flashFactor = (t <= 0.25) ? (1.0 - t / 0.25) * 1.5 * distFactor : 0.0;
+                        var c = Math.min(1.0, sp.colVal + flashFactor);
+                        sp.mesh.material.color.setRGB(c, c, c);
+
+                        // 透過度制御 (3.0sまで維持、0.3sまでは火球を隠さないよう薄く)
+                        var remRatio = 1.0;
+                        if (t > 3.00) {
+                            remRatio = Math.max(0.0, (sp.lifeSpan - t) / Math.max(0.05, (sp.lifeSpan - 3.00)));
+                        }
+                        var visibility = (t <= 0.30) ? 0.05 : (t <= 0.40 ? (0.05 + 0.95 * ((t - 0.30) / 0.10)) : 1.0);
+                        sp.mesh.material.opacity = 0.70 * remRatio * visibility;
+                    }
+                }
+            });
+
+            // ========================================================
+            // 2B. 曳火: 主煙 (isAirburstMainSmoke) - 20パーツ水平ドーナツ型
+            // ========================================================
+            var mainParticles = [];
+            for (var mIdx = 0; mIdx < 20; mIdx++) {
+                var mTheta = Math.random() * Math.PI * 2.0;
+                var mrInit = (1.53 + Math.random() * 0.25) * calScale;
+                var mrFinal = (1.91 + (Math.random() - 0.5) * 0.25) * calScale;
+                var mszInit = (0.50 + Math.random() * 0.30) * calScale;
+                var mszFinal = mszInit * 1.2;
+                var mcolVal = Math.random() * 0.20; // 漆黒〜深灰
+                var mrNorm = Math.min(1.0, mrInit / (2.25 * calScale));
+                var mLife = 5.00 - Math.random() * 0.50;
+                var mRot = Math.random() * (Math.PI * 0.5);
+
+                var mMesh = createBillboardMesh(0x111111, 0.8);
+                effectGroup.add(mMesh);
+
+                mainParticles.push({
+                    mesh: mMesh,
+                    theta: mTheta,
+                    rInit: mrInit, rFinal: mrFinal,
+                    szInit: mszInit, szFinal: mszFinal,
+                    colVal: mcolVal,
+                    rNorm: mrNorm,
+                    lifeSpan: mLife,
+                    rotAngle: mRot
+                });
+            }
+
+            components.push({
+                type: 'airburst_main',
+                particles: mainParticles,
+                maxDuration: 5.0,
+                update: function(t, camera) {
+                    if (t > this.maxDuration + 0.5) return;
+                    var progress = Math.min(1.0, t / this.maxDuration);
+                    var windDx = windVec.x * t;
+                    var windDz = windVec.z * t;
+                    var riseDy = riseSpeed * t;
+
+                    for (var k = 0; k < this.particles.length; k++) {
+                        var mp = this.particles[k];
+                        if (t > mp.lifeSpan) {
+                            mp.mesh.visible = false;
+                            continue;
+                        }
+                        mp.mesh.visible = true;
+
+                        var rCur = mp.rInit + (mp.rFinal - mp.rInit) * progress;
+                        var szCur = mp.szInit + (mp.szFinal - mp.szInit) * progress;
+
+                        var px = rCur * Math.cos(mp.theta) + windDx;
+                        var py = rCur * Math.sin(mp.theta) * 0.3 + riseDy; // やや偏平ドーナツ
+                        var pz = rCur * Math.sin(mp.theta) + windDz;
+
+                        mp.mesh.position.set(px, py, pz);
+                        mp.mesh.scale.set(szCur, szCur, 1.0);
+                        mp.mesh.quaternion.copy(camera.quaternion);
+                        mp.mesh.rotateZ(mp.rotAngle);
+
+                        // 閃光照射
+                        var distFactor = Math.max(0.0, 1.0 - mp.rNorm) * Math.max(0.0, 1.0 - mp.rNorm);
+                        var flashFactor = (t <= 0.25) ? (1.0 - t / 0.25) * 1.5 * distFactor : 0.0;
+                        var c = Math.min(1.0, mp.colVal + flashFactor);
+                        mp.mesh.material.color.setRGB(c, c, c);
+
+                        var remRatio = 1.0;
+                        if (t > 3.00) {
+                            remRatio = Math.max(0.0, (mp.lifeSpan - t) / Math.max(0.05, (mp.lifeSpan - 3.00)));
+                        }
+                        var visibility = (t <= 0.30) ? 0.05 : (t <= 0.40 ? (0.05 + 0.95 * ((t - 0.30) / 0.10)) : 1.0);
+                        mp.mesh.material.opacity = 0.80 * remRatio * visibility;
+                    }
+                }
+            });
+
+        } else {
+            // ========================================================
+            // 3A. 着発: 爆発土煙 (isGroundDirtSmoke) - 40パーツ放物線
+            // ========================================================
+            var dirtParticles = [];
+            for (var dIdx = 0; dIdx < 40; dIdx++) {
+                var dAngle = Math.random() * Math.PI * 2.0;
+                var vHoriz = (15.0 + Math.random() * 31.0) * calScale;
+                var vx0 = Math.sin(dAngle) * vHoriz;
+                var vz0 = Math.cos(dAngle) * vHoriz;
+                var vy0 = (25.0 + Math.random() * 53.0) * calScale;
+                var rectSize = (0.50 + Math.random() * 0.50) * calScale;
+                var colVal = Math.random() * 0.50;
+                var alphaInit = 0.80 + Math.random() * 0.20;
+                var rNormDirt = Math.min(1.0, vHoriz / (46.0 * calScale));
+                var dLife = 1.50 - Math.random() * 0.70;
+                var dRot = Math.random() * (Math.PI * 0.5);
+
+                var dMesh = createBillboardMesh(0x444444, alphaInit);
+                effectGroup.add(dMesh);
+
+                dirtParticles.push({
+                    mesh: dMesh,
+                    angle: dAngle,
+                    vx0: vx0, vy0: vy0, vz0: vz0,
+                    rectSize: rectSize,
+                    colVal: colVal,
+                    alphaInit: alphaInit,
+                    rNorm: rNormDirt,
+                    lifeSpan: dLife,
+                    rotAngle: dRot
+                });
+            }
+
+            components.push({
+                type: 'ground_dirt',
+                particles: dirtParticles,
+                maxDuration: 1.5,
+                update: function(t, camera) {
+                    if (t > this.maxDuration + 0.5) return;
+                    var kDrag = 4.5;
+                    var dragFactor = (1.0 - Math.exp(-kDrag * t)) / kDrag;
+                    var gAcc = 4.9;
+
+                    for (var k = 0; k < this.particles.length; k++) {
+                        var dp = this.particles[k];
+                        if (t > dp.lifeSpan) {
+                            dp.mesh.visible = false;
+                            continue;
+                        }
+                        dp.mesh.visible = true;
+
+                        var px = dp.vx0 * dragFactor;
+                        var py = Math.max(0.05, dp.vy0 * dragFactor - 0.5 * gAcc * t * t);
+                        var pz = dp.vz0 * dragFactor;
+
+                        var size = dp.rectSize * (1.0 + Math.min(1.0, t / 1.0));
+                        dp.mesh.position.set(px, py, pz);
+                        dp.mesh.scale.set(size, size, 1.0);
+                        dp.mesh.quaternion.copy(camera.quaternion);
+                        dp.mesh.rotateZ(dp.rotAngle);
+
+                        // 色: 爆心付近(rNorm <= 0.5)は作動時0.15s純白色
+                        var c = dp.colVal;
+                        if (dp.rNorm <= 0.50 && t <= 0.15) {
+                            var lerpFactor = (1.0 - t / 0.15);
+                            c = c * (1.0 - lerpFactor) + 1.0 * lerpFactor;
+                        }
+                        dp.mesh.material.color.setRGB(c, c * 0.9, c * 0.8);
+
+                        var remRatio = 1.0;
+                        if (t > 0.50) {
+                            remRatio = Math.max(0.0, (dp.lifeSpan - t) / Math.max(0.05, (dp.lifeSpan - 0.50)));
+                        }
+                        var visibility = (t <= 0.30) ? 0.05 : (t <= 0.40 ? (0.05 + 0.95 * ((t - 0.30) / 0.10)) : 1.0);
+                        dp.mesh.material.opacity = dp.alphaInit * remRatio * visibility;
+                    }
+                }
+            });
+
+            // ========================================================
+            // 3B. 着発: 着発主煙 (isGroundMainSmoke) - 24パーツ (0.3s遅延)
+            // ========================================================
+            var gMainParticles = [];
+            for (var gmIdx = 0; gmIdx < 24; gmIdx++) {
+                var gmAngle = Math.random() * Math.PI * 2.0;
+                var gmrInit = (1.5 + Math.random() * 4.5) * calScale;
+                var gmrFinal = gmrInit + (3.0 + Math.random() * 3.0) * calScale;
+                var gmRectSize = (0.60 + Math.random() * 0.60) * calScale;
+                var gmCol = Math.random() * 0.20;
+                var gmInitY = (0.2 + Math.random() * 3.5) * calScale;
+                var gmRiseFactor = (0.7 + Math.random() * 0.8);
+                var gmLife = 5.00 - Math.random() * 0.50;
+                var gmRot = Math.random() * (Math.PI * 0.5);
+
+                var gmMesh = createBillboardMesh(0x1a1a1a, 0.65);
+                effectGroup.add(gmMesh);
+
+                gMainParticles.push({
+                    mesh: gmMesh,
+                    angle: gmAngle,
+                    rInit: gmrInit, rFinal: gmrFinal,
+                    rectSize: gmRectSize,
+                    colVal: gmCol,
+                    initY: gmInitY,
+                    riseFactor: gmRiseFactor,
+                    lifeSpan: gmLife,
+                    rotAngle: gmRot
+                });
+            }
+
+            components.push({
+                type: 'ground_main',
+                particles: gMainParticles,
+                delay: 0.3,
+                maxDuration: 5.0,
+                update: function(t, camera) {
+                    if (t < this.delay || t > (this.delay + this.maxDuration + 0.5)) {
+                        for (var n = 0; n < this.particles.length; n++) this.particles[n].mesh.visible = false;
+                        return;
+                    }
+                    var effT = t - this.delay;
+                    var windX = windVec.x * effT;
+                    var windZ = windVec.z * effT;
+                    var windY = riseSpeed * effT;
+
+                    for (var k = 0; k < this.particles.length; k++) {
+                        var gmp = this.particles[k];
+                        if (effT > gmp.lifeSpan) {
+                            gmp.mesh.visible = false;
+                            continue;
+                        }
+                        gmp.mesh.visible = true;
+
+                        var rCurr = gmp.rInit + (gmp.rFinal - gmp.rInit) * Math.min(1.0, effT / this.maxDuration);
+                        var px = Math.cos(gmp.angle) * rCurr + windX;
+                        var py = gmp.initY + windY * gmp.riseFactor;
+                        var pz = Math.sin(gmp.angle) * rCurr + windZ;
+
+                        gmp.mesh.position.set(px, py, pz);
+                        gmp.mesh.scale.set(gmp.rectSize, gmp.rectSize, 1.0);
+                        gmp.mesh.quaternion.copy(camera.quaternion);
+                        gmp.mesh.rotateZ(gmp.rotAngle);
+
+                        gmp.mesh.material.color.setRGB(gmp.colVal, gmp.colVal, gmp.colVal);
+
+                        var remRatio = 1.0;
+                        if (effT > 3.00) {
+                            remRatio = Math.max(0.0, (gmp.lifeSpan - effT) / Math.max(0.05, (gmp.lifeSpan - 3.00)));
+                        }
+                        gmp.mesh.material.opacity = 0.65 * remRatio;
+                    }
+                }
+            });
+        }
+
+        // ========================================================
+        // 4. 地表弾足 (Debris) - 破裂高 < 30m で地表から吹き上がる白煙パーツ
+        // ========================================================
+        if (hob < 30.0) {
+            var energyRatio = Math.max(0.0, 1.0 - hob / 30.0);
+            var debrisCount = Math.round(10 + 30 * energyRatio);
+            var spreadRadius = Math.max(2.0, 20.0 * energyRatio);
+            var debrisParticles = [];
+
+            for (var debIdx = 0; debIdx < debrisCount; debIdx++) {
+                var dAng = Math.random() * Math.PI * 2.0;
+                var dDist = Math.sqrt(Math.random()) * spreadRadius;
+                var offX = Math.cos(dAng) * dDist;
+                var offZ = Math.sin(dAng) * dDist;
+                var maxUp = 2.0 * (0.25 + Math.random() * 0.75);
+                var climbSpeedRatio = 0.6 + Math.random() * 0.8;
+                var debSize = 0.50 + Math.random() * 1.00;
+                var debCol = 0.85 + Math.random() * 0.10;
+                var debLife = 2.50 - Math.random() * 0.50;
+                var debRot = Math.random() * (Math.PI * 0.5);
+
+                var debMesh = createBillboardMesh(0xdddddd, 0.50);
+                effectGroup.add(debMesh);
+
+                debrisParticles.push({
+                    mesh: debMesh,
+                    offX: offX, offZ: offZ,
+                    startY: -hob, // 地表相対高度
+                    maxUp: maxUp,
+                    climbSpeedRatio: climbSpeedRatio,
+                    baseSize: debSize,
+                    colVal: debCol,
+                    lifeSpan: debLife,
+                    rotAngle: debRot
+                });
+            }
+
+            components.push({
+                type: 'debris',
+                particles: debrisParticles,
+                maxDuration: 2.5,
+                update: function(t, camera) {
+                    if (t > this.maxDuration + 0.5) return;
+                    var scaleGrowth = 1.0 + 1.0 * Math.min(1.0, t / this.maxDuration);
+                    var windX = 0, windZ = 0;
+                    if (t <= 0.5) {
+                        var blend = (t * t) / (2.0 * 0.5);
+                        windX = windVec.x * blend;
+                        windZ = windVec.z * blend;
+                    } else {
+                        var windT = 0.25 + (t - 0.5);
+                        windX = windVec.x * windT;
+                        windZ = windVec.z * windT;
+                    }
+
+                    for (var k = 0; k < this.particles.length; k++) {
+                        var dbp = this.particles[k];
+                        if (t > dbp.lifeSpan) {
+                            dbp.mesh.visible = false;
+                            continue;
+                        }
+                        dbp.mesh.visible = true;
+
+                        var climbP = Math.min(1.0, t / (0.5 * dbp.climbSpeedRatio));
+                        var climbFactor = 1.0 - (1.0 - climbP) * (1.0 - climbP);
+
+                        var px = dbp.offX + windX;
+                        var py = dbp.startY + dbp.maxUp * climbFactor;
+                        var pz = dbp.offZ + windZ;
+
+                        var sz = scaleGrowth * dbp.baseSize;
+                        dbp.mesh.position.set(px, py, pz);
+                        dbp.mesh.scale.set(sz, sz, 1.0);
+                        dbp.mesh.quaternion.copy(camera.quaternion);
+                        dbp.mesh.rotateZ(dbp.rotAngle);
+
+                        dbp.mesh.material.color.setRGB(dbp.colVal, dbp.colVal, dbp.colVal);
+
+                        var remRatio = Math.max(0.0, (dbp.lifeSpan - t) / dbp.lifeSpan);
+                        dbp.mesh.material.opacity = 0.50 * remRatio;
+                    }
+                }
+            });
+        }
+
+        // アクティブエフェクトとして登録
+        activeEffects.push({
+            group: effectGroup,
+            components: components,
+            startTime: startTime,
+            maxDuration: 5.5,
+            scene: scene
+        });
+    }
+
+    /**
+     * 毎フレームのアニメーション更新ループ
+     * 
+     * @param {THREE.Camera} camera
+     */
+    function update(camera) {
+        if (!camera) return;
+        var now = performance.now();
+
+        for (var i = activeEffects.length - 1; i >= 0; i--) {
+            var effect = activeEffects[i];
+            var elapsed = (now - effect.startTime) / 1000.0;
+
+            if (elapsed > effect.maxDuration) {
+                // シーンからクリーンアップ・破棄
+                if (effect.scene && effect.group) {
+                    effect.scene.remove(effect.group);
+                    effect.group.traverse(function(obj) {
+                        if (obj.geometry && obj.geometry !== sharedQuadGeometry) obj.geometry.dispose();
+                        if (obj.material) obj.material.dispose();
+                    });
+                }
+                activeEffects.splice(i, 1);
+                continue;
+            }
+
+            for (var c = 0; c < effect.components.length; c++) {
+                effect.components[c].update(elapsed, camera);
+            }
+        }
+    }
+
+    // グローバル公開
+    window.FTXAR_EFFECTS = {
+        triggerImpact: triggerImpact,
+        update: update,
+        updateEffects: function(ts, camera) {
+            update(camera);
+        }
+    };
+
+})(window);
+</script>

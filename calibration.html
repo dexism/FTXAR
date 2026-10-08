@@ -1,0 +1,147 @@
+<script>
+/**
+ * FTXAR - Device Attitude & Compass Calibration (calibration.html)
+ * Version: 2610082045
+ * 
+ * - DeviceOrientation 四元数姿勢推定 (iOS / Android / 横持ち対応)
+ * - 太陽、月、北極星、著明な山によるワンタップ電子コンパス校正
+ */
+
+(function(window) {
+    'use strict';
+
+    var DEG2RAD = Math.PI / 180.0;
+    var RAD2DEG = 180.0 / Math.PI;
+
+    var attitudeState = {
+        isActive: false,
+        rawQuat: null,
+        currentQuat: null,
+        lastQuat: null,
+        arYawOffset: parseFloat(localStorage.getItem('ftxar_yaw_offset') || '0'), // ラジアン
+        lastOrientation: (window.screen && window.screen.orientation) ? window.screen.orientation.angle : (window.orientation || 0),
+        currentAzimuthMil: 0,
+        currentPitchMil: 0
+    };
+
+    /**
+     * センサー起動とリスナー登録
+     */
+    function startSensors() {
+        if (attitudeState.isActive) return;
+
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+            DeviceOrientationEvent.requestPermission()
+                .then(function(state) {
+                    if (state === 'granted') {
+                        attachListeners();
+                    } else {
+                        console.warn('センサーへのアクセスが拒否されました。');
+                    }
+                })
+                .catch(function(err) {
+                    console.warn("Sensor permission catch:", err);
+                });
+        } else {
+            attachListeners();
+        }
+    }
+
+    function attachListeners() {
+        attitudeState.isActive = true;
+        window.addEventListener('deviceorientation', onDeviceOrientation, true);
+        window.addEventListener('orientationchange', function() {
+            attitudeState.lastOrientation = (window.screen && window.screen.orientation) ? window.screen.orientation.angle : (window.orientation || 0);
+            attitudeState.lastQuat = null;
+        });
+        console.info("FTXAR Calibration: Sensors active.");
+    }
+
+    function onDeviceOrientation(e) {
+        if (!attitudeState.isActive || typeof THREE === 'undefined') return;
+
+        var alpha = (e.webkitCompassHeading !== undefined) ? e.webkitCompassHeading : (360.0 - (e.alpha || 0));
+        var beta = e.beta || 0;
+        var gamma = e.gamma || 0;
+        var orient = (window.screen && window.screen.orientation) ? window.screen.orientation.angle : (window.orientation || 0);
+
+        var euler = new THREE.Euler(beta * DEG2RAD, gamma * DEG2RAD, -alpha * DEG2RAD, 'ZXY');
+        var qDevice = new THREE.Quaternion().setFromEuler(euler);
+
+        var qOrient = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -orient * DEG2RAD);
+        qDevice.multiply(qOrient);
+
+        var qBaseFix = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2.0, 0, 0, 'ZXY'));
+        var qFinal = new THREE.Quaternion().multiplyQuaternions(qBaseFix, qDevice);
+
+        if (!attitudeState.rawQuat) attitudeState.rawQuat = new THREE.Quaternion();
+        attitudeState.rawQuat.copy(qFinal);
+
+        if (!attitudeState.currentQuat) {
+            attitudeState.currentQuat = qFinal.clone();
+        } else {
+            attitudeState.currentQuat.slerp(qFinal, 0.15);
+        }
+
+        var forward = new THREE.Vector3(0, 0, -1).applyQuaternion(getCameraQuaternion());
+        var azRad = Math.atan2(forward.x, -forward.z);
+        if (azRad < 0) azRad += 2.0 * Math.PI;
+
+        attitudeState.currentAzimuthMil = Math.round(azRad * (6400.0 / (2.0 * Math.PI))) % 6400;
+        attitudeState.currentPitchMil = Math.round(Math.asin(forward.y) * (6400.0 / (2.0 * Math.PI)));
+    }
+
+    /**
+     * カメラに適用する最終クォータニオン (ヨー角オフセット合成済み)
+     */
+    function getCameraQuaternion() {
+        if (typeof THREE === 'undefined') return null;
+        if (!attitudeState.currentQuat) return new THREE.Quaternion();
+        var q = attitudeState.currentQuat.clone();
+        if (attitudeState.arYawOffset !== 0) {
+            var qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), attitudeState.arYawOffset);
+            q.premultiply(qYaw);
+        }
+        return q;
+    }
+
+    /**
+     * キャリブレーションの実行
+     */
+    function applyCalibration(targetBearingMil) {
+        if (!attitudeState.currentQuat || typeof THREE === 'undefined') return false;
+
+        var forwardRaw = new THREE.Vector3(0, 0, -1).applyQuaternion(attitudeState.currentQuat);
+        var rawAzRad = Math.atan2(forwardRaw.x, -forwardRaw.z);
+        if (rawAzRad < 0) rawAzRad += 2.0 * Math.PI;
+
+        var targetRad = targetBearingMil * (2.0 * Math.PI / 6400.0);
+        var offset = targetRad - rawAzRad;
+        offset = ((offset % (2.0 * Math.PI)) + 2.0 * Math.PI) % (2.0 * Math.PI);
+        if (offset > Math.PI) offset -= 2.0 * Math.PI;
+
+        attitudeState.arYawOffset = offset;
+        localStorage.setItem('ftxar_yaw_offset', offset.toString());
+        console.info("FTXAR Calibration: Applied Yaw Offset = " + (offset * RAD2DEG).toFixed(2) + " deg");
+        return true;
+    }
+
+    /**
+     * キャリブレーションのリセット
+     */
+    function resetCalibration() {
+        attitudeState.arYawOffset = 0;
+        localStorage.removeItem('ftxar_yaw_offset');
+    }
+
+    // グローバル公開
+    window.FTXAR_CALIBRATION = {
+        startSensors: startSensors,
+        getCameraQuaternion: getCameraQuaternion,
+        applyCalibration: applyCalibration,
+        resetCalibration: resetCalibration,
+        getState: function() { return attitudeState; }
+    };
+
+})(window);
+</script>

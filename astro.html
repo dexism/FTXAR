@@ -1,0 +1,232 @@
+<script>
+/**
+ * FTXAR - Astronomy & Mountain Target Module (astro.html)
+ * Version: 2610082015
+ * 
+ * 太陽、月、北極星、著明な山の視位置・方位角計算
+ */
+
+(function(window) {
+    'use strict';
+
+    const DEG2RAD = Math.PI / 180.0;
+    const RAD2DEG = 180.0 / Math.PI;
+
+    // 著明な山データベース (日本各地の名峰・主要ランドマーク)
+    const PROMINENT_MOUNTAINS = [
+        { name: "富士山 (剣ヶ峰)", lat: 35.360556, lng: 138.727778, alt: 3776 },
+        { name: "大山 (鳥取県)", lat: 35.370833, lng: 133.538333, alt: 1729 },
+        { name: "阿蘇山 (中岳)", lat: 32.884167, lng: 131.085833, alt: 1592 },
+        { name: "由布岳", lat: 33.281667, lng: 131.390833, alt: 1583 },
+        { name: "乗鞍岳 (剣ヶ峰)", lat: 36.106667, lng: 137.554167, alt: 3026 },
+        { name: "槍ヶ岳", lat: 36.335556, lng: 137.647778, alt: 3180 },
+        { name: "鳥海山", lat: 39.098889, lng: 140.048889, alt: 2236 },
+        { name: "岩手山", lat: 39.853056, lng: 141.001667, alt: 2038 },
+        { name: "羊蹄山", lat: 42.827222, lng: 140.812222, alt: 1898 },
+        { name: "大雪山 (旭岳)", lat: 43.663889, lng: 142.855000, alt: 2291 },
+        { name: "筑波山 (男体山)", lat: 36.225556, lng: 140.106944, alt: 871 },
+        { name: "箱根山 (神山)", lat: 35.234444, lng: 139.019722, alt: 1438 },
+        { name: "立山 (大汝山)", lat: 36.577222, lng: 137.620000, alt: 3015 },
+        { name: "白山 (御前峰)", lat: 36.155000, lng: 136.772222, alt: 2702 },
+        { name: "開聞岳", lat: 31.179444, lng: 130.528056, alt: 924 }
+    ];
+
+    /**
+     * ユリウス日と経過世紀 T (J2000.0)
+     */
+    function getEpoch(dateMs) {
+        const jd = (dateMs / 86400000.0) + 2440587.5;
+        const d = jd - 2451545.0;
+        const T = d / 36525.0;
+        return { jd: jd, d: d, T: T };
+    }
+
+    /**
+     * グリニッジ視恒星時 GAST (ラジアン)
+     */
+    function getGAST(d, T) {
+        let gmst0 = 280.46061837 + 360.98564736629 * d + 0.000387933 * T * T - (T * T * T) / 38710000.0;
+        gmst0 = ((gmst0 % 360.0) + 360.0) % 360.0;
+        return gmst0 * DEG2RAD;
+    }
+
+    /**
+     * 赤道座標 (RA, Dec) から地平座標 (Azimuth, Altitude) への変換
+     * @return { azRad, altRad, azDeg, altDeg, azMil }
+     */
+    function equatorialToHorizontal(ra, dec, lat, lng, dateMs) {
+        const ep = getEpoch(dateMs);
+        const gast = getGAST(ep.d, ep.T);
+        const localSiderealRad = gast + (lng * DEG2RAD);
+        let hourAngle = localSiderealRad - ra;
+        hourAngle = ((hourAngle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+
+        const latRad = lat * DEG2RAD;
+        const sinAlt = Math.sin(latRad) * Math.sin(dec) + Math.cos(latRad) * Math.cos(dec) * Math.cos(hourAngle);
+        const altRad = Math.asin(Math.max(-1.0, Math.min(1.0, sinAlt)));
+
+        const cosAlt = Math.cos(altRad);
+        let azRad = 0;
+        if (Math.abs(cosAlt) > 1e-6) {
+            const sinAz = -Math.cos(dec) * Math.sin(hourAngle) / cosAlt;
+            const cosAz = (Math.sin(dec) - Math.sin(latRad) * sinAlt) / (Math.cos(latRad) * cosAlt);
+            azRad = Math.atan2(sinAz, cosAz);
+            if (azRad < 0) azRad += 2.0 * Math.PI;
+        }
+
+        const azDeg = azRad * RAD2DEG;
+        const altDeg = altRad * RAD2DEG;
+        const azMil = Math.round(azRad * (6400.0 / (2.0 * Math.PI))) % 6400;
+
+        return {
+            azRad: azRad,
+            altRad: altRad,
+            azDeg: azDeg,
+            altDeg: altDeg,
+            azMil: azMil
+        };
+    }
+
+    /**
+     * 太陽の地平座標計算
+     */
+    function getSunPosition(lat, lng, dateMs) {
+        const ep = getEpoch(dateMs);
+        const T = ep.T;
+
+        let L0 = 280.46646 + 36000.76983 * T;
+        let M = 357.52911 + 35999.05029 * T;
+        L0 = ((L0 % 360.0) + 360.0) % 360.0;
+        M = ((M % 360.0) + 360.0) % 360.0;
+
+        const M_rad = M * DEG2RAD;
+        const C = (1.914602 - 0.004817 * T) * Math.sin(M_rad)
+                + (0.019993 - 0.000101 * T) * Math.sin(2.0 * M_rad)
+                + 0.000289 * Math.sin(3.0 * M_rad);
+        const TrueL = L0 + C;
+
+        const Omega = 125.04452 - 1934.136261 * T;
+        const Omega_rad = Omega * DEG2RAD;
+        let Lambda = TrueL - 0.00569 - 0.00478 * Math.sin(Omega_rad);
+        Lambda = ((Lambda % 360.0) + 360.0) % 360.0;
+        const Lambda_rad = Lambda * DEG2RAD;
+
+        const Eps0 = 23.439291 - 0.0130042 * T;
+        const Eps = Eps0 + 0.00256 * Math.cos(Omega_rad);
+        const Eps_rad = Eps * DEG2RAD;
+
+        const ra = Math.atan2(Math.cos(Eps_rad) * Math.sin(Lambda_rad), Math.cos(Lambda_rad));
+        const dec = Math.asin(Math.sin(Eps_rad) * Math.sin(Lambda_rad));
+
+        return equatorialToHorizontal(ra, dec, lat, lng, dateMs);
+    }
+
+    /**
+     * 月の地平座標計算 (簡約視位置)
+     */
+    function getMoonPosition(lat, lng, dateMs) {
+        const ep = getEpoch(dateMs);
+        const T = ep.T;
+
+        // 月の平均軌道要素
+        let L_prime = 218.3164477 + 481267.88123421 * T;
+        let D = 297.8501921 + 445267.1114034 * T;
+        let M = 357.5291092 + 35999.0502909 * T;
+        let M_prime = 134.9633964 + 477198.8675055 * T;
+        let F = 93.2720950 + 483202.0175233 * T;
+
+        L_prime = ((L_prime % 360.0) + 360.0) % 360.0;
+        D = ((D % 360.0) + 360.0) % 360.0;
+        M = ((M % 360.0) + 360.0) % 360.0;
+        M_prime = ((M_prime % 360.0) + 360.0) % 360.0;
+        F = ((F % 360.0) + 360.0) % 360.0;
+
+        const D_rad = D * DEG2RAD;
+        const M_rad = M * DEG2RAD;
+        const Mp_rad = M_prime * DEG2RAD;
+        const F_rad = F * DEG2RAD;
+
+        // 主要周期的摂動項
+        let lon = L_prime 
+            + 6.288774 * Math.sin(Mp_rad) 
+            + 1.274027 * Math.sin(2.0 * D_rad - Mp_rad)
+            + 0.658314 * Math.sin(2.0 * D_rad)
+            + 0.213618 * Math.sin(2.0 * Mp_rad)
+            - 0.185116 * Math.sin(M_rad)
+            - 0.114332 * Math.sin(2.0 * F_rad);
+
+        let latM = 5.128122 * Math.sin(F_rad)
+            + 0.280602 * Math.sin(Mp_rad + F_rad)
+            + 0.277693 * Math.sin(Mp_rad - F_rad)
+            + 0.173237 * Math.sin(2.0 * D_rad - F_rad);
+
+        lon = ((lon % 360.0) + 360.0) % 360.0;
+        const lonRad = lon * DEG2RAD;
+        const latMRad = latM * DEG2RAD;
+
+        const Eps = (23.439291 - 0.0130042 * T) * DEG2RAD;
+        const ra = Math.atan2(Math.sin(lonRad) * Math.cos(Eps) - Math.tan(latMRad) * Math.sin(Eps), Math.cos(lonRad));
+        const dec = Math.asin(Math.sin(latMRad) * Math.cos(Eps) + Math.cos(latMRad) * Math.sin(Eps) * Math.sin(lonRad));
+
+        return equatorialToHorizontal(ra, dec, lat, lng, dateMs);
+    }
+
+    /**
+     * 北極星 (Polaris) の地平座標計算 (歳差補正)
+     */
+    function getPolarisPosition(lat, lng, dateMs) {
+        const ep = getEpoch(dateMs);
+        const T = ep.T;
+
+        // J2000.0: RA = 2h 31m 49.09s, Dec = +89° 15' 50.8"
+        // 歳差補正 (赤経・赤緯の年差)
+        const ra2000 = (2.0 + 31.0 / 60.0 + 49.09 / 3600.0) * 15.0 * DEG2RAD;
+        const dec2000 = (89.0 + 15.0 / 60.0 + 50.8 / 3600.0) * DEG2RAD;
+
+        // 概略歳差運動 (T: 世紀数)
+        const dRa = (3.075 + 1.336 * Math.sin(ra2000) * Math.tan(dec2000)) * (T * 100.0) * (15.0 / 3600.0) * DEG2RAD;
+        const dDec = (20.04 * Math.cos(ra2000)) * (T * 100.0) * (1.0 / 3600.0) * DEG2RAD;
+
+        const ra = ra2000 + dRa;
+        const dec = dec2000 + dDec;
+
+        return equatorialToHorizontal(ra, dec, lat, lng, dateMs);
+    }
+
+    /**
+     * 現在地から指定山頂への方位角・仰角・距離計算
+     */
+    function getMountainTargetInfo(userLat, userLng, userAlt, mtn) {
+        if (!window.FTXAR_MGRS) return null;
+        const res = window.FTXAR_MGRS.calcDistanceAndBearing(userLat, userLng, mtn.lat, mtn.lng);
+        const dAlt = (mtn.alt || 0) - (userAlt || 0);
+        // 地球曲率降下補正: drop = d^2 / (2 * R)
+        const drop = Math.pow(res.distance, 2) / 12756274.0;
+        const effDAlt = dAlt - drop;
+        const elevAngleRad = Math.atan2(effDAlt, res.distance);
+        const elevAngleDeg = elevAngleRad * RAD2DEG;
+        const elevAngleMil = Math.round(elevAngleRad * (6400.0 / (2.0 * Math.PI)));
+
+        return {
+            name: mtn.name,
+            distance: res.distance,
+            bearingRad: res.bearingRad,
+            bearingDeg: res.bearingDeg,
+            bearingMil: res.bearingMil,
+            elevAngleRad: elevAngleRad,
+            elevAngleDeg: elevAngleDeg,
+            elevAngleMil: elevAngleMil
+        };
+    }
+
+    // グローバル公開
+    window.FTXAR_ASTRO = {
+        PROMINENT_MOUNTAINS: PROMINENT_MOUNTAINS,
+        getSunPosition: getSunPosition,
+        getMoonPosition: getMoonPosition,
+        getPolarisPosition: getPolarisPosition,
+        getMountainTargetInfo: getMountainTargetInfo
+    };
+
+})(window);
+</script>

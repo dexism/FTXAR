@@ -1,0 +1,280 @@
+<script>
+/**
+ * FTXAR - Terrain Elevation & Occlusion Engine (terrain_occlusion.html)
+ * Version: 2610082045
+ * 
+ * 国土地理院標高タイル(DEM5A/10B)の取得・デコード
+ * 不可視深度メッシュ(Depth Mask)による地形オクルージョン
+ * 最低地上高 (DEM + 1.0m) の自動維持
+ */
+
+(function(window) {
+    'use strict';
+
+    var TILE_CACHE = new Map();
+    var LOADING_PROMISES = new Map();
+    var MAX_CACHE_SIZE = 80;
+    var cacheKeysOrder = [];
+
+    // 地形オクルージョン状態
+    var occlusionState = {
+        isOcclusionEnabled: true,
+        isDebugWireframe: false,
+        terrainMesh: null,
+        wireframeMesh: null,
+        userDemAlt: null,
+        centerLat: null,
+        centerLng: null
+    };
+
+    /**
+     * 緯度経度からタイル座標(XYZ)への変換
+     */
+    function latLngToTile(lat, lng, zoom) {
+        var latRad = lat * Math.PI / 180.0;
+        var n = Math.pow(2, zoom);
+        var x = Math.floor((lng + 180.0) / 360.0 * n);
+        var y = Math.floor((1.0 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2.0 * n);
+        return { x: x, y: y, z: zoom };
+    }
+
+    /**
+     * タイル内のピクセル位置(0-255)
+     */
+    function latLngToPixel(lat, lng, zoom, tileX, tileY) {
+        var latRad = lat * Math.PI / 180.0;
+        var n = Math.pow(2, zoom);
+        var exactX = (lng + 180.0) / 360.0 * n;
+        var exactY = (1.0 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2.0 * n;
+        var px = Math.floor((exactX - tileX) * 256.0);
+        var py = Math.floor((exactY - tileY) * 256.0);
+        return {
+            px: Math.max(0, Math.min(255, px)),
+            py: Math.max(0, Math.min(255, py))
+        };
+    }
+
+    /**
+     * RGBピクセル値から標高(m)をデコード
+     */
+    function decodeElevation(r, g, b) {
+        var x = r * 65536 + g * 256 + b;
+        if (x === 8388608 || x === 0) return null; // 無効値
+        return (x < 8388608) ? (x * 0.01) : ((x - 16777216) * 0.01);
+    }
+
+    /**
+     * 標高タイルの画像フェッチ
+     */
+    function fetchTileImage(url) {
+        if (LOADING_PROMISES.has(url)) {
+            return LOADING_PROMISES.get(url);
+        }
+        var p = new Promise(function(resolve) {
+            var img = new Image();
+            img.crossOrigin = "Anonymous";
+            img.onload = function() {
+                var canvas = document.createElement("canvas");
+                canvas.width = 256;
+                canvas.height = 256;
+                var ctx = canvas.getContext("2d", { willReadFrequently: true });
+                ctx.drawImage(img, 0, 0);
+                var imgData = ctx.getImageData(0, 0, 256, 256);
+                resolve(imgData);
+            };
+            img.onerror = function() {
+                resolve(null);
+            };
+            img.src = url;
+        }).finally(function() {
+            LOADING_PROMISES.delete(url);
+        });
+
+        LOADING_PROMISES.set(url, p);
+        return p;
+    }
+
+    /**
+     * 国土地理院DEMタイルから標高(m)を取得 (DEM5A -> DEM5B -> DEM10B フォールバック)
+     */
+    async function getElevation(lat, lng) {
+        var zoom = 15;
+        var tile = latLngToTile(lat, lng, zoom);
+        var tileKey = zoom + '_' + tile.x + '_' + tile.y;
+
+        var imgData = TILE_CACHE.get(tileKey);
+        if (!imgData) {
+            var sources = [
+                'https://cyberjapandata.gsi.go.jp/xyz/dem5a_png/' + zoom + '/' + tile.x + '/' + tile.y + '.png',
+                'https://cyberjapandata.gsi.go.jp/xyz/dem5b_png/' + zoom + '/' + tile.x + '/' + tile.y + '.png',
+                'https://cyberjapandata.gsi.go.jp/xyz/dem_png/' + zoom + '/' + tile.x + '/' + tile.y + '.png'
+            ];
+
+            for (var i = 0; i < sources.length; i++) {
+                imgData = await fetchTileImage(sources[i]);
+                if (imgData) break;
+            }
+
+            if (imgData) {
+                if (TILE_CACHE.size >= MAX_CACHE_SIZE) {
+                    var oldest = cacheKeysOrder.shift();
+                    TILE_CACHE.delete(oldest);
+                }
+                TILE_CACHE.set(tileKey, imgData);
+                cacheKeysOrder.push(tileKey);
+            }
+        }
+
+        if (imgData) {
+            var pix = latLngToPixel(lat, lng, zoom, tile.x, tile.y);
+            var idx = (pix.py * 256 + pix.px) * 4;
+            var r = imgData.data[idx];
+            var g = imgData.data[idx + 1];
+            var b = imgData.data[idx + 2];
+            var elev = decodeElevation(r, g, b);
+            if (elev !== null) return elev;
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * 指定中心座標(観測者)を中心とするThree.js地形オクルージョンメッシュの構築
+     */
+    async function buildTerrainMesh(scene, centerLat, centerLng, radiusM, resolution) {
+        if (!radiusM) radiusM = 1500;
+        if (!resolution) resolution = 64;
+        if (!scene || typeof THREE === 'undefined') return;
+
+        occlusionState.centerLat = centerLat;
+        occlusionState.centerLng = centerLng;
+
+        var userAlt = await getElevation(centerLat, centerLng);
+        occlusionState.userDemAlt = userAlt;
+
+        if (occlusionState.terrainMesh) {
+            scene.remove(occlusionState.terrainMesh);
+            if (occlusionState.terrainMesh.geometry) occlusionState.terrainMesh.geometry.dispose();
+            if (occlusionState.terrainMesh.material) occlusionState.terrainMesh.material.dispose();
+            occlusionState.terrainMesh = null;
+        }
+        if (occlusionState.wireframeMesh) {
+            scene.remove(occlusionState.wireframeMesh);
+            if (occlusionState.wireframeMesh.geometry) occlusionState.wireframeMesh.geometry.dispose();
+            if (occlusionState.wireframeMesh.material) occlusionState.wireframeMesh.material.dispose();
+            occlusionState.wireframeMesh = null;
+        }
+
+        var size = radiusM * 2.0;
+        var geom = new THREE.PlaneGeometry(size, size, resolution, resolution);
+        geom.rotateX(-Math.PI / 2.0);
+
+        var posAttr = geom.attributes.position;
+        var vertexCount = posAttr.count;
+
+        var latMPerDeg = 111132.95;
+        var lngMPerDeg = 111412.84 * Math.cos(centerLat * Math.PI / 180.0);
+
+        var elevPromises = [];
+        var coords = [];
+
+        for (var i = 0; i < vertexCount; i++) {
+            var vx = posAttr.getX(i);
+            var vz = posAttr.getZ(i);
+
+            var ptLat = centerLat - (vz / latMPerDeg);
+            var ptLng = centerLng + (vx / lngMPerDeg);
+
+            coords.push({ x: vx, z: vz, lat: ptLat, lng: ptLng, idx: i });
+        }
+
+        for (var i = 0; i < coords.length; i++) {
+            elevPromises.push(getElevation(coords[i].lat, coords[i].lng));
+        }
+
+        var elevs = await Promise.all(elevPromises);
+
+        for (var i = 0; i < coords.length; i++) {
+            var h = elevs[i] !== null ? elevs[i] : userAlt;
+            var distXZ = Math.sqrt(coords[i].x * coords[i].x + coords[i].z * coords[i].z);
+            var drop = (distXZ * distXZ) / 12756274.0;
+            var relY = (h - userAlt) - drop;
+
+            posAttr.setY(coords[i].idx, relY);
+        }
+
+        geom.computeVertexNormals();
+
+        var occlusionMat = new THREE.MeshBasicMaterial({
+            colorWrite: false,
+            depthWrite: true,
+            depthTest: true
+        });
+
+        var terrainMesh = new THREE.Mesh(geom, occlusionMat);
+        terrainMesh.renderOrder = 0;
+        scene.add(terrainMesh);
+        occlusionState.terrainMesh = terrainMesh;
+
+        var wireMat = new THREE.MeshBasicMaterial({
+            color: 0x00ff88,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.25,
+            depthTest: true,
+            depthWrite: false
+        });
+        var wireMesh = new THREE.Mesh(geom.clone(), wireMat);
+        wireMesh.visible = occlusionState.isDebugWireframe;
+        wireMesh.renderOrder = 1;
+        scene.add(wireMesh);
+        occlusionState.wireframeMesh = wireMesh;
+
+        console.info("FTXAR Terrain: Built occlusion mesh (Radius " + radiusM + "m, Base Alt " + userAlt.toFixed(1) + "m)");
+        return userAlt;
+    }
+
+    /**
+     * 観測者から目標への視線(Line Of Sight)遮蔽判定
+     */
+    function checkLineOfSight(eyePos, targetPos) {
+        if (!occlusionState.terrainMesh || typeof THREE === 'undefined') return true;
+
+        var dir = new THREE.Vector3().subVectors(targetPos, eyePos);
+        var dist = dir.length();
+        dir.normalize();
+
+        var raycaster = new THREE.Raycaster(eyePos, dir, 0.5, dist);
+        var intersects = raycaster.intersectObject(occlusionState.terrainMesh, false);
+
+        if (intersects.length > 0) {
+            var hitDist = intersects[0].distance;
+            if (hitDist < dist - 2.0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * デバッグワイヤーフレーム表示トグル
+     */
+    function toggleDebugWireframe() {
+        occlusionState.isDebugWireframe = !occlusionState.isDebugWireframe;
+        if (occlusionState.wireframeMesh) {
+            occlusionState.wireframeMesh.visible = occlusionState.isDebugWireframe;
+        }
+        return occlusionState.isDebugWireframe;
+    }
+
+    // グローバル公開
+    window.FTXAR_TERRAIN = {
+        getElevation: getElevation,
+        buildTerrainMesh: buildTerrainMesh,
+        checkLineOfSight: checkLineOfSight,
+        toggleDebugWireframe: toggleDebugWireframe,
+        getState: function() { return occlusionState; }
+    };
+
+})(window);
+</script>

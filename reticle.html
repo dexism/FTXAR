@@ -1,0 +1,178 @@
+<script>
+/**
+ * FTXAR - 10-Mil Tactical Reticle & Zoom Engine (reticle.html)
+ * Version: 2610082045
+ * 
+ * 10ミル単位のレティクル重畳描画 (ON/OFF切替可能)
+ * カメラ画角(FOV)およびズーム倍率に完全連動する光学測角グリッド
+ */
+
+(function(window) {
+    'use strict';
+
+    var reticleState = {
+        isVisible: true,
+        currentZoom: 1.0,     // 1.0x, 2.0x, 5.0x, 10.0x
+        baseFovDeg: 60.0,     // 標準カメラ垂直画角 (度)
+        canvas: null,
+        ctx: null
+    };
+
+    /**
+     * レティクル描画キャンバスの初期化
+     */
+    function initReticle(canvasElement) {
+        reticleState.canvas = canvasElement;
+        reticleState.ctx = canvasElement.getContext('2d');
+        resizeReticle();
+        window.addEventListener('resize', resizeReticle);
+        // 初期描画
+        drawReticle(reticleState.baseFovDeg);
+    }
+
+    function resizeReticle() {
+        if (!reticleState.canvas) return;
+        var w = window.innerWidth;
+        var h = window.innerHeight;
+        var dpr = window.devicePixelRatio || 1;
+        reticleState.canvas.width = w * dpr;
+        reticleState.canvas.height = h * dpr;
+        reticleState.canvas.style.width = w + 'px';
+        reticleState.canvas.style.height = h + 'px';
+        drawReticle(reticleState.baseFovDeg);
+    }
+
+    /**
+     * レティクルの描画 (毎フレーム呼出)
+     */
+    function drawReticle(cameraFovDeg) {
+        if (!reticleState.isVisible || !reticleState.ctx || !reticleState.canvas) return;
+
+        var ctx = reticleState.ctx;
+        var canvas = reticleState.canvas;
+        var dpr = window.devicePixelRatio || 1;
+        var w = canvas.width;
+        var h = canvas.height;
+        var cx = w / 2.0;
+        var cy = h / 2.0;
+
+        ctx.clearRect(0, 0, w, h);
+
+        var fovDeg = (cameraFovDeg || reticleState.baseFovDeg);
+        var fovRad = (fovDeg * Math.PI) / 180.0;
+
+        // 1ミルあたりのピクセル幅 (Angular True-Scale)
+        var milRad = (2.0 * Math.PI) / 6400.0;
+        var pxPerMil = ((h / 2.0) / Math.tan(fovRad / 2.0)) * Math.tan(milRad) * reticleState.currentZoom;
+
+        ctx.save();
+        ctx.strokeStyle = '#00ff88'; // 軍用蛍光グリーン
+        ctx.fillStyle = '#00ff88';
+        ctx.font = Math.round(11 * dpr) + "px 'Roboto Mono', monospace, sans-serif";
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = 1.5 * dpr;
+
+        // 1. 中央十字微小ドット
+        ctx.beginPath();
+        ctx.arc(cx, cy, 2.5 * dpr, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 2. 水平軸の10ミル目盛線描画 (±250ミルまで)
+        var maxMil = 250;
+        for (var m = -maxMil; m <= maxMil; m += 10) {
+            if (m === 0) continue;
+            var x = cx + (m * pxPerMil);
+            if (x < 0 || x > w) continue;
+
+            var tickLen = 6 * dpr;   // 10ミル小目盛
+            var is50 = (m % 50 === 0);
+            var is100 = (m % 100 === 0);
+
+            if (is100) {
+                tickLen = 16 * dpr;  // 100ミル大目盛
+            } else if (is50) {
+                tickLen = 11 * dpr;  // 50ミル中目盛
+            }
+
+            ctx.beginPath();
+            ctx.moveTo(x, cy - tickLen);
+            ctx.lineTo(x, cy + tickLen);
+            ctx.stroke();
+
+            // 100ミルごとの数値ラベル
+            if (is100) {
+                var label = Math.abs(m).toString();
+                ctx.fillText(label, x, cy + tickLen + 12 * dpr);
+            }
+        }
+
+        // 3. 垂直軸の10ミル目盛線描画 (±250ミルまで)
+        for (var m2 = -maxMil; m2 <= maxMil; m2 += 10) {
+            if (m2 === 0) continue;
+            var y = cy - (m2 * pxPerMil);
+            if (y < 0 || y > h) continue;
+
+            var tickLen2 = 6 * dpr;
+            var is50_2 = (m2 % 50 === 0);
+            var is100_2 = (m2 % 100 === 0);
+
+            if (is100_2) {
+                tickLen2 = 16 * dpr;
+            } else if (is50_2) {
+                tickLen2 = 11 * dpr;
+            }
+
+            ctx.beginPath();
+            ctx.moveTo(cx - tickLen2, y);
+            ctx.lineTo(cx + tickLen2, y);
+            ctx.stroke();
+
+            // 100ミルごとの数値ラベル
+            if (is100_2) {
+                var label2 = Math.abs(m2).toString();
+                ctx.textAlign = 'left';
+                ctx.fillText(label2, cx + tickLen2 + 5 * dpr, y);
+            }
+        }
+
+        // 4. 右上に現在のズーム倍率と目盛単位の表示
+        ctx.textAlign = 'right';
+        ctx.fillText("RETICLE: 10 MIL / TICK  [" + reticleState.currentZoom.toFixed(1) + "x]", w - 20 * dpr, 45 * dpr);
+
+        ctx.restore();
+    }
+
+    /**
+     * レティクル表示トグル
+     */
+    function toggleReticle() {
+        reticleState.isVisible = !reticleState.isVisible;
+        if (!reticleState.isVisible && reticleState.ctx && reticleState.canvas) {
+            reticleState.ctx.clearRect(0, 0, reticleState.canvas.width, reticleState.canvas.height);
+        } else {
+            drawReticle(reticleState.baseFovDeg);
+        }
+        return reticleState.isVisible;
+    }
+
+    /**
+     * ズーム倍率の変更 (1x, 2x, 5x, 10x等)
+     */
+    function setZoom(zoomLevel) {
+        reticleState.currentZoom = Math.max(1.0, Math.min(10.0, zoomLevel));
+        drawReticle(reticleState.baseFovDeg);
+        return reticleState.currentZoom;
+    }
+
+    // グローバル公開
+    window.FTXAR_RETICLE = {
+        initReticle: initReticle,
+        drawReticle: drawReticle,
+        toggleReticle: toggleReticle,
+        setZoom: setZoom,
+        getState: function() { return reticleState; }
+    };
+
+})(window);
+</script>

@@ -1,0 +1,237 @@
+<script>
+/**
+ * FTXAR - MGRS & GRS80 Geodesic Module
+ * Version: 2610082015
+ * 
+ * UTM / MGRS 相互変換および測地計算
+ * フォーマット: 54S UE 00,000 - 00,000 H1234
+ */
+
+(function(window) {
+    'use strict';
+
+    const GRS80 = {
+        a: 6378137.0,          // 長半径
+        rf: 298.257222101,     // 逆扁平率
+        k0: 0.9996             // UTM縮尺係数
+    };
+    GRRS_INIT();
+
+    function GRRS_INIT() {
+        GRS80.b = GRS80.a * (1.0 - 1.0 / GRS80.rf);
+        GRS80.e2 = (Math.pow(GRS80.a, 2) - Math.pow(GRS80.b, 2)) / Math.pow(GRS80.a, 2);
+        GRS80.ep2 = (Math.pow(GRS80.a, 2) - Math.pow(GRS80.b, 2)) / Math.pow(GRS80.b, 2);
+    }
+
+    /**
+     * UTMゾーン番号取得
+     */
+    function getUtmZone(lat, lng) {
+        return Math.floor((lng + 180.0) / 6.0) + 1;
+    }
+
+    /**
+     * MGRSグリッドゾーン指定子 (GZD) 取得
+     */
+    function getMGRSGridZoneDesignator(lat) {
+        if (lat < -80 || lat >= 84) return 'X';
+        const BANDS = "CDEFGHJKLMNPQRSTUVWX";
+        let idx = Math.floor((lat + 80.0) / 8.0);
+        if (idx > 19) idx = 19;
+        return BANDS.charAt(idx);
+    }
+
+    /**
+     * 100km平方区画の2文字ペア取得
+     */
+    function getMGRSSquareLetters(zone, easting, northing) {
+        const SET1 = "ABCDEFGH";
+        const SET2 = "JKLMNPQR";
+        const SET3 = "STUVWXYZ";
+        const EVEN_ROWS = "FGHJKLMNPQRSTUVABCDE";
+        const ODD_ROWS  = "ABCDEFGHJKLMNPQRSTUV";
+
+        const eCode = Math.floor(easting / 100000);
+        let colLetter = "";
+        const zMod = zone % 3;
+        if (zMod === 1) colLetter = SET1.charAt(eCode - 1);
+        else if (zMod === 2) colLetter = SET2.charAt(eCode - 1);
+        else colLetter = SET3.charAt(eCode - 1);
+
+        const nCode = Math.floor(northing / 100000) % 20;
+        let rowLetter = (zone % 2 === 0) ? EVEN_ROWS.charAt(nCode) : ODD_ROWS.charAt(nCode);
+
+        return colLetter + rowLetter;
+    }
+
+    /**
+     * 緯度経度からUTM座標計算
+     */
+    function latLngToUTM(lat, lng, forceZone) {
+        const zone = forceZone || getUtmZone(lat, lng);
+        const lon0 = (zone - 1) * 6 - 180 + 3;
+
+        const latRad = lat * (Math.PI / 180.0);
+        const lngRad = lng * (Math.PI / 180.0);
+        const lon0Rad = lon0 * (Math.PI / 180.0);
+
+        const a = GRS80.a;
+        const e2 = GRS80.e2;
+        const k0 = GRS80.k0;
+
+        const N = a / Math.sqrt(1.0 - e2 * Math.pow(Math.sin(latRad), 2));
+        const T = Math.pow(Math.tan(latRad), 2);
+        const C = GRS80.ep2 * Math.pow(Math.cos(latRad), 2);
+        const A = Math.cos(latRad) * (lngRad - lon0Rad);
+
+        const M = a * (
+            (1.0 - e2 / 4.0 - 3.0 * Math.pow(e2, 2) / 64.0 - 5.0 * Math.pow(e2, 3) / 256.0) * latRad
+            - (3.0 * e2 / 8.0 + 3.0 * Math.pow(e2, 2) / 32.0 + 45.0 * Math.pow(e2, 3) / 1024.0) * Math.sin(2.0 * latRad)
+            + (15.0 * Math.pow(e2, 2) / 256.0 + 45.0 * Math.pow(e2, 3) / 1024.0) * Math.sin(4.0 * latRad)
+            - (35.0 * Math.pow(e2, 3) / 3072.0) * Math.sin(6.0 * latRad)
+        );
+
+        const x = k0 * N * (
+            A + (1.0 - T + C) * Math.pow(A, 3) / 6.0
+            + (5.0 - 18.0 * T + Math.pow(T, 2) + 72.0 * C - 58.0 * GRS80.ep2) * Math.pow(A, 5) / 120.0
+        ) + 500000.0;
+
+        let y = k0 * (
+            M + N * Math.tan(latRad) * (
+                Math.pow(A, 2) / 2.0
+                + (5.0 - T + 9.0 * C + 4.0 * Math.pow(C, 2)) * Math.pow(A, 4) / 24.0
+                + (61.0 - 58.0 * T + Math.pow(T, 2) + 600.0 * C - 330.0 * GRS80.ep2) * Math.pow(A, 6) / 720.0
+            )
+        );
+        if (lat < 0) y += 10000000.0;
+
+        const dLng = lngRad - lon0Rad;
+        const gamma = dLng * Math.sin(latRad) + (Math.pow(dLng, 3) / 3.0) * Math.sin(latRad) * Math.pow(Math.cos(latRad), 2);
+
+        return {
+            zone: zone,
+            hemisphere: lat >= 0 ? 'N' : 'S',
+            easting: x,
+            northing: y,
+            convergence: gamma
+        };
+    }
+
+    /**
+     * MGRS標準フォーマット生成: 54S UE 00,000 - 00,000 H1234
+     * @param {number} lat 緯度
+     * @param {number} lng 経度
+     * @param {number} [alt=0] 標高(m)
+     * @return {string}
+     */
+    function formatMGRS(lat, lng, alt) {
+        if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) {
+            return '-- - ----- - ----- H----';
+        }
+        const utm = latLngToUTM(lat, lng);
+        const gzd = utm.zone + getMGRSGridZoneDesignator(lat);
+        const sq = getMGRSSquareLetters(utm.zone, utm.easting, utm.northing);
+
+        const eRem = Math.floor(utm.easting % 100000);
+        const nRem = Math.floor(utm.northing % 100000);
+
+        // 00,000 形式 (2桁 + カンマ + 3桁)
+        const format5Digit = function(val) {
+            const s = Math.max(0, Math.min(99999, Math.round(val))).toString().padStart(5, '0');
+            return s.substring(0, 2) + ',' + s.substring(2);
+        };
+
+        const eStr = format5Digit(eRem);
+        const nStr = format5Digit(nRem);
+        const hVal = (typeof alt === 'number' && !isNaN(alt)) ? Math.round(alt) : 0;
+        const hStr = 'H' + (hVal >= 0 ? hVal.toString().padStart(4, '0') : hVal.toString());
+
+        return gzd + ' ' + sq + ' ' + eStr + ' - ' + nStr + ' ' + hStr;
+    }
+
+    /**
+     * 2地点間の大圏距離(m)および初期真方位角(rad/deg)
+     */
+    function calcDistanceAndBearing(lat1, lng1, lat2, lng2) {
+        const phi1 = lat1 * Math.PI / 180.0;
+        const phi2 = lat2 * Math.PI / 180.0;
+        const lam1 = lng1 * Math.PI / 180.0;
+        const lam2 = lng2 * Math.PI / 180.0;
+        const dLam = lam2 - lam1;
+
+        const sinPhi1 = Math.sin(phi1), cosPhi1 = Math.cos(phi1);
+        const sinPhi2 = Math.sin(phi2), cosPhi2 = Math.cos(phi2);
+        const cosDlam = Math.cos(dLam), sinDlam = Math.sin(dLam);
+
+        const deltaSigma = Math.atan2(
+            Math.sqrt(Math.pow(cosPhi2 * sinDlam, 2) + Math.pow(cosPhi1 * sinPhi2 - sinPhi1 * cosPhi2 * cosDlam, 2)),
+            sinPhi1 * sinPhi2 + cosPhi1 * cosPhi2 * cosDlam
+        );
+        const distance = GRS80.a * deltaSigma;
+
+        const y = sinDlam * cosPhi2;
+        const x = cosPhi1 * sinPhi2 - sinPhi1 * cosPhi2 * cosDlam;
+        let bearingRad = Math.atan2(y, x);
+        if (bearingRad < 0) bearingRad += 2.0 * Math.PI;
+
+        const bearingDeg = bearingRad * (180.0 / Math.PI);
+        const bearingMil = Math.round(bearingRad * (6400.0 / (2.0 * Math.PI))) % 6400;
+
+        return {
+            distance: distance,
+            bearingRad: bearingRad,
+            bearingDeg: bearingDeg,
+            bearingMil: bearingMil
+        };
+    }
+
+    /**
+     * 基準点から指定方位(ミル)および距離(m)の目標地点の緯度経度を算出 (正野計算)
+     */
+    function destinationPoint(lat, lng, distanceM, bearingMil) {
+        const rad = bearingMil * (2.0 * Math.PI / 6400.0);
+        const delta = distanceM / GRS80.a; // 角距離
+
+        const phi1 = lat * Math.PI / 180.0;
+        const lam1 = lng * Math.PI / 180.0;
+
+        const sinPhi1 = Math.sin(phi1), cosPhi1 = Math.cos(phi1);
+        const sinDelta = Math.sin(delta), cosDelta = Math.cos(delta);
+
+        const phi2 = Math.asin(sinPhi1 * cosDelta + cosPhi1 * sinDelta * Math.cos(rad));
+        const y = Math.sin(rad) * sinDelta * cosPhi1;
+        const x = cosDelta - sinPhi1 * Math.sin(phi2);
+        const lam2 = lam1 + Math.atan2(y, x);
+
+        return {
+            lat: phi2 * (180.0 / Math.PI),
+            lng: ((lam2 * (180.0 / Math.PI) + 540.0) % 360.0) - 180.0
+        };
+    }
+
+    /**
+     * 日本周辺の磁針偏角計算 (国土地理院 2020.0 近似式)
+     * @return {number} [mil]
+     */
+    function calculateMagneticDeclination(lat, lng) {
+        if (lat >= 20 && lat <= 50 && lng >= 120 && lng <= 150) {
+            const dLat = lat - 37.0;
+            const dLng = lng - 138.0;
+            const decMinutes = 498.2 + 21.0 * dLat - 6.1 * dLng - 0.4 * Math.pow(dLat, 2) - 0.5 * dLat * dLng - 0.6 * Math.pow(dLng, 2);
+            const decDegrees = decMinutes / 60.0;
+            return -(decDegrees * (6400.0 / 360.0));
+        }
+        return -130.0; // デフォルト約 -7.3度 (約 -130 mil)
+    }
+
+    // グローバル公開
+    window.FTXAR_MGRS = {
+        latLngToUTM: latLngToUTM,
+        formatMGRS: formatMGRS,
+        calcDistanceAndBearing: calcDistanceAndBearing,
+        destinationPoint: destinationPoint,
+        calculateMagneticDeclination: calculateMagneticDeclination
+    };
+
+})(window);
+</script>

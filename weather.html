@@ -1,0 +1,96 @@
+<script>
+/**
+ * FTXAR - Weather & Wind Integration Module (weather.html)
+ * Version: 2610082045
+ * 
+ * Open-Meteo API による局地風向・風速・気象データの非同期フェッチ
+ */
+
+(function(window) {
+    'use strict';
+
+    var weatherCache = {
+        lat: null,
+        lng: null,
+        timestamp: 0,
+        data: {
+            windSpeed: 2.5,        // m/s
+            windDirectionDeg: 45.0, // 0:北, 90:東, 180:南, 270:西
+            temperature: 20.0,
+            humidity: 60.0
+        }
+    };
+
+    /**
+     * 指定座標の風向・風速データを取得 (Open-Meteo API)
+     */
+    async function fetchWeather(lat, lng, force) {
+        var now = Date.now();
+        // 10分以内かつ約1km以内の移動であればキャッシュを再利用
+        if (!force && weatherCache.lat !== null && (now - weatherCache.timestamp < 600000)) {
+            var dLat = Math.abs(lat - weatherCache.lat);
+            var dLng = Math.abs(lng - weatherCache.lng);
+            if (dLat < 0.01 && dLng < 0.01) {
+                return formatWeatherData(weatherCache.data);
+            }
+        }
+
+        // 文字列結合でURLを生成 (GASテンプレートエラーを完全防止)
+        var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat.toFixed(4) + 
+                  '&longitude=' + lng.toFixed(4) + 
+                  '&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m';
+
+        try {
+            var resp = await fetch(url, { cache: 'no-store' });
+            if (!resp.ok) throw new Error('Weather fetch HTTP error: ' + resp.status);
+            var json = await resp.json();
+            
+            if (json && json.current) {
+                weatherCache.lat = lat;
+                weatherCache.lng = lng;
+                weatherCache.timestamp = now;
+                weatherCache.data = {
+                    windSpeed: json.current.wind_speed_10m || 2.0,
+                    windDirectionDeg: json.current.wind_direction_10m || 45.0,
+                    temperature: json.current.temperature_2m || 18.0,
+                    humidity: json.current.relative_humidity_2m || 50.0
+                };
+                console.info("FTXAR Weather: Updated from Open-Meteo", weatherCache.data);
+            }
+        } catch (err) {
+            console.warn("FTXAR Weather: Failed to fetch Open-Meteo, using fallback default.", err);
+        }
+
+        return formatWeatherData(weatherCache.data);
+    }
+
+    /**
+     * 風向(風が吹いてくる方位)からThree.js座標系における煙の流動ベクトルを算出
+     */
+    function formatWeatherData(d) {
+        var speed = d.windSpeed;
+        var dirDeg = d.windDirectionDeg;
+        var flowDeg = (dirDeg + 180.0) % 360.0;
+        var flowRad = flowDeg * (Math.PI / 180.0);
+
+        var flowX = Math.sin(flowRad) * speed;
+        var flowZ = Math.cos(flowRad) * speed;
+
+        return {
+            windSpeed: speed,
+            windDirectionDeg: dirDeg,
+            flowDirectionDeg: flowDeg,
+            temperature: d.temperature,
+            humidity: d.humidity,
+            flowVector: { x: flowX, y: 0.8, z: flowZ } // y: 自然上昇流
+        };
+    }
+
+    // グローバル公開
+    window.FTXAR_WEATHER = {
+        fetchWeather: fetchWeather,
+        getLatestWeather: function() { return formatWeatherData(weatherCache.data); }
+    };
+
+})(window);
+</script>

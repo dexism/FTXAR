@@ -1,0 +1,3797 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>FTXAR - 砲兵弾着観測WebAR [v<?= version ?>]</title>
+    <!-- Three.js (CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    
+    <!-- スタイルシート埋め込み -->
+    <style>
+/* FTXAR - Tactical HUD & WebAR Styles (style.html) */
+/* Version: 2610082015 */
+
+:root {
+    --ftx-green: #00ff88;
+    --ftx-green-dim: rgba(0, 255, 136, 0.25);
+    --ftx-red: #ff3b30;
+    --ftx-orange: #ff9500;
+    --ftx-bg-panel: rgba(16, 22, 18, 0.88);
+    --ftx-border: rgba(0, 255, 136, 0.4);
+    --ftx-font-mono: 'Roboto Mono', 'SF Pro Display', Consolas, Menlo, monospace;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+html, body {
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+    background-color: #06110a;
+    background: radial-gradient(ellipse at center, #11221a 0%, #06110a 70%, #020503 100%);
+    font-family: var(--ftx-font-mono);
+    color: #e0e0e0;
+}
+
+/* 1. 全画面カメラ映像 & WebGL レイヤー */
+#camera-video {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100dvh;
+    object-fit: cover;
+    z-index: 1;
+    background-color: #06110a;
+}
+
+#ar-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100dvh;
+    z-index: 2;
+    pointer-events: none;
+}
+
+#reticle-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100dvh;
+    z-index: 3;
+    pointer-events: none;
+}
+
+/* 2. HUD コンテナ */
+#hud-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100dvh;
+    z-index: 10;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+/* 上部コントロールバー */
+.hud-top-bar {
+    pointer-events: auto;
+    width: 100%;
+    padding: 10px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0) 100%);
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.hud-brand {
+    font-size: 0.9em;
+    font-weight: bold;
+    color: var(--ftx-green);
+    text-shadow: 0 0 6px rgba(0, 255, 136, 0.6);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.hud-btn-group {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.hud-btn {
+    background: rgba(16, 24, 20, 0.75);
+    color: #fff;
+    border: 1px solid var(--ftx-border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 0.75em;
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+    transition: all 0.15s ease;
+}
+
+.hud-btn:active {
+    background: var(--ftx-green);
+    color: #000;
+}
+
+.hud-btn.active {
+    background: var(--ftx-green);
+    color: #000;
+    border-color: var(--ftx-green);
+}
+
+.hud-btn-primary {
+    background: rgba(0, 255, 136, 0.2);
+    color: var(--ftx-green);
+    border: 1px solid var(--ftx-green);
+}
+
+/* 右側ズームコントロール */
+.hud-right-zoom {
+    pointer-events: auto;
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.zoom-btn {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: rgba(16, 24, 20, 0.8);
+    border: 1px solid var(--ftx-border);
+    color: var(--ftx-green);
+    font-size: 0.75em;
+    font-weight: bold;
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+}
+
+.zoom-btn.active {
+    background: var(--ftx-green);
+    color: #000;
+}
+
+/* 下部ステータスバー (MGRS座標) */
+.hud-bottom-bar {
+    pointer-events: auto;
+    width: 100%;
+    padding: 12px 14px;
+    background: linear-gradient(0deg, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0) 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.mgrs-display {
+    font-size: 1.05em;
+    font-weight: bold;
+    color: var(--ftx-green);
+    letter-spacing: 1px;
+    text-shadow: 0 0 8px rgba(0, 255, 136, 0.7);
+    background: rgba(0, 20, 10, 0.6);
+    border: 1px solid var(--ftx-border);
+    border-radius: 4px;
+    padding: 5px 14px;
+}
+
+.hud-sub-info {
+    font-size: 0.7em;
+    color: #aaa;
+    display: flex;
+    gap: 16px;
+}
+
+/* 3. モーダルダイアログ */
+.ftx-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100dvh;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(6px);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+}
+
+.ftx-modal-content {
+    width: 100%;
+    max-width: 440px;
+    max-height: 90dvh;
+    background: var(--ftx-bg-panel);
+    border: 2px solid var(--ftx-border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8), 0 0 16px rgba(0, 255, 136, 0.2);
+    overflow: hidden;
+}
+
+.ftx-modal-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--ftx-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(0, 20, 10, 0.4);
+}
+
+.ftx-modal-title {
+    font-size: 0.95em;
+    font-weight: bold;
+    color: var(--ftx-green);
+}
+
+.ftx-modal-close {
+    background: transparent;
+    border: none;
+    color: #aaa;
+    font-size: 1.2em;
+    cursor: pointer;
+    padding: 4px;
+}
+
+.ftx-modal-body {
+    padding: 14px 16px;
+    overflow-y: auto;
+    font-size: 0.85em;
+}
+
+.ftx-form-group {
+    margin-bottom: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.ftx-form-group label {
+    font-size: 0.75em;
+    color: #9ab;
+}
+
+.ftx-form-group input,
+.ftx-form-group select {
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid #445;
+    border-radius: 4px;
+    color: #fff;
+    padding: 7px 10px;
+    font-family: inherit;
+    font-size: 0.9em;
+}
+
+.ftx-form-group input:focus,
+.ftx-form-group select:focus {
+    outline: none;
+    border-color: var(--ftx-green);
+    box-shadow: 0 0 6px var(--ftx-green-dim);
+}
+
+.ftx-form-row {
+    display: flex;
+    gap: 10px;
+}
+
+.ftx-form-row .ftx-form-group.half {
+    flex: 1;
+}
+
+.ftx-modal-footer {
+    padding: 10px 16px;
+    border-top: 1px solid var(--ftx-border);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    background: rgba(0, 20, 10, 0.4);
+}
+
+.ftx-btn-primary {
+    background: var(--ftx-green);
+    color: #000;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 16px;
+    font-weight: bold;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.ftx-btn-secondary {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 8px 14px;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+/* キャリブレーション情報ボックス */
+.ftx-cal-info-box {
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--ftx-border);
+    border-radius: 6px;
+    padding: 10px;
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 0.85em;
+}
+
+.cal-row {
+    display: flex;
+    justify-content: space-between;
+}
+
+.cal-row strong {
+    color: var(--ftx-green);
+}
+
+/* 任務リストカード */
+.mission-card {
+    background: rgba(0, 20, 10, 0.4);
+    border: 1px solid var(--ftx-border);
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.mission-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(0, 255, 136, 0.2);
+    padding-bottom: 4px;
+}
+
+.mission-card-title {
+    font-weight: bold;
+    color: var(--ftx-green);
+}
+
+.mission-status-badge {
+    font-size: 0.7em;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-weight: bold;
+}
+
+.mission-status-badge.active {
+    background: var(--ftx-green);
+    color: #000;
+}
+
+.mission-status-badge.cease_fire {
+    background: var(--ftx-red);
+    color: #fff;
+}
+
+.mission-card-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.btn-cease-fire {
+    background: rgba(255, 59, 48, 0.2);
+    border: 1px solid var(--ftx-red);
+    color: var(--ftx-red);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 0.8em;
+    cursor: pointer;
+}
+
+.btn-resume-fire {
+    background: rgba(0, 255, 136, 0.2);
+    border: 1px solid var(--ftx-green);
+    color: var(--ftx-green);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 0.8em;
+    cursor: pointer;
+}
+
+/* カメラ状態・制限警告バナー */
+#camera-status-banner {
+    pointer-events: auto;
+    width: 95%;
+    max-width: 600px;
+    margin: 8px auto 0 auto;
+    padding: 8px 12px;
+    background: rgba(20, 10, 10, 0.92);
+    border: 1px solid var(--ftx-orange);
+    border-radius: 6px;
+    color: #ffcc00;
+    font-size: 0.75em;
+    line-height: 1.4;
+    text-align: center;
+    box-shadow: 0 0 10px rgba(255, 149, 0, 0.4);
+    display: none;
+}
+
+#camera-status-banner .banner-actions {
+    margin-top: 6px;
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+}
+
+.banner-btn {
+    background: var(--ftx-orange);
+    color: #000;
+    font-weight: bold;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 0.85em;
+    cursor: pointer;
+}
+
+/* カメラ起動ボタンの強調 */
+#btn-start-camera.active-stream {
+    border-color: var(--ftx-green);
+    color: var(--ftx-green);
+}
+#btn-start-camera.stream-error {
+    border-color: var(--ftx-orange);
+    color: var(--ftx-orange);
+    animation: ftxPulse 1.5s infinite;
+}
+
+@keyframes ftxPulse {
+    0% { opacity: 1.0; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1.0; }
+}
+
+/* 初回起動タップ誘導オーバーレイ */
+#start-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100dvh;
+    background: rgba(0, 0, 0, 0.75);
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    backdrop-filter: blur(3px);
+}
+
+.start-box {
+    text-align: center;
+    padding: 24px;
+    border: 2px solid var(--ftx-green);
+    background: rgba(10, 20, 15, 0.9);
+    border-radius: 8px;
+    box-shadow: 0 0 20px rgba(0, 255, 136, 0.4);
+    max-width: 85%;
+}
+
+.start-box h2 {
+    color: var(--ftx-green);
+    font-size: 1.3em;
+    margin-bottom: 12px;
+}
+
+.start-box p {
+    font-size: 0.85em;
+    color: #ccc;
+    margin-bottom: 16px;
+    line-height: 1.5;
+}
+
+.start-box .tap-btn {
+    display: inline-block;
+    background: var(--ftx-green);
+    color: #000;
+    font-weight: bold;
+    padding: 10px 24px;
+    border-radius: 6px;
+    font-size: 1em;
+}
+</style>
+
+</head>
+<body>
+
+    <!-- 1. 全画面カメラ実写映像 -->
+    <video id="camera-video" autoplay playsinline muted></video>
+
+    <!-- 2. Three.js WebGL キャンバス (オクルージョン地形 & 弾着エフェクト) -->
+    <canvas id="ar-canvas"></canvas>
+
+    <!-- 3. 10ミル目盛タクティカルレティクル キャンバス -->
+    <canvas id="reticle-canvas"></canvas>
+
+    <!-- 4. HUD オーバーレイ -->
+    <div id="hud-overlay">
+        <!-- 上部コントロールバー -->
+        <div class="hud-top-bar">
+            <div class="hud-brand">
+                <span>FTXAR</span>
+                <span style="font-size: 0.65em; color: #888;">v<?= version ?></span>
+            </div>
+            
+            <div class="hud-btn-group">
+                <button class="hud-btn hud-btn-primary" onclick="window.FTXAR_UI.openModal('modal-mission-create')">射撃任務</button>
+                <button class="hud-btn" onclick="window.FTXAR_UI.openModal('modal-mission-list')">任務一覧</button>
+                <button class="hud-btn" onclick="window.FTXAR_UI.openModal('modal-calibration')">校正</button>
+                <button class="hud-btn active" id="btn-toggle-reticle" onclick="window.FTXAR_UI.toggleReticle()">レティクル</button>
+                <button class="hud-btn" onclick="window.FTXAR_UI.openQRModal()">QR</button>
+                <button class="hud-btn stream-error" id="btn-start-camera" onclick="window.FTXAR_UI.requestCamera()">📷 カメラ</button>
+                <button class="hud-btn" id="btn-external-open" onclick="window.FTXAR_UI.openExternalWindow()" title="ブラウザの別タブで直接開く">外部起動</button>
+            </div>
+        </div>
+
+        <!-- カメラ警告・案内バナー -->
+        <div id="camera-status-banner">
+            <div id="camera-banner-text">カメラのアクセスを待機中...</div>
+            <div class="banner-actions">
+                <button class="banner-btn" onclick="window.FTXAR_UI.requestCamera()">📷 再試行</button>
+                <button class="banner-btn" onclick="window.FTXAR_UI.openExternalWindow()">別タブで直接開く</button>
+            </div>
+        </div>
+
+        <!-- 右側ズームコントロール (1x / 2x / 5x / 10x) -->
+        <div class="hud-right-zoom">
+            <button class="zoom-btn active" id="zoom-btn-1" onclick="window.FTXAR_UI.setZoomLevel(1.0)">1x</button>
+            <button class="zoom-btn" id="zoom-btn-2" onclick="window.FTXAR_UI.setZoomLevel(2.0)">2x</button>
+            <button class="zoom-btn" id="zoom-btn-5" onclick="window.FTXAR_UI.setZoomLevel(5.0)">5x</button>
+            <button class="zoom-btn" id="zoom-btn-10" onclick="window.FTXAR_UI.setZoomLevel(10.0)">10x</button>
+        </div>
+
+        <!-- 下部ステータスバー (MGRS座標表示) -->
+        <div class="hud-bottom-bar">
+            <div class="mgrs-display" id="mgrs-text">
+                54S UE 00,000 - 00,000 H----
+            </div>
+            <div class="hud-sub-info">
+                <span id="hud-azimuth-info">方位: 0000 mil</span>
+                <span id="hud-elevation-info">仰角: +000 mil</span>
+                <span id="hud-wind-info">風向: --° --m/s</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 初回タップ開始オーバーレイ (iOS/Chrome ユーザー操作許可トリガー) -->
+    <div id="start-overlay" onclick="window.FTXAR_UI.startUserSession()">
+        <div class="start-box">
+            <h2>FTXAR 砲兵弾着AR</h2>
+            <p>画面をタップしてカメラ映像、電子コンパス、および戦場音響を開始します。</p>
+            <div class="tap-btn">タップして開始</div>
+        </div>
+    </div>
+
+    <!-- モーダルダイアログ埋め込み -->
+    <!-- FTXAR: Mission Manager & Modals (mission_manager.html) -->
+<!-- Version: 2610082045 -->
+
+<!-- 1. 射撃任務 設定モーダル -->
+<div id="modal-mission-create" class="ftx-modal" style="display: none;">
+    <div class="ftx-modal-content">
+        <div class="ftx-modal-header">
+            <span class="ftx-modal-title">新規 射撃任務 (Fire Mission) 発令</span>
+            <button class="ftx-modal-close" onclick="window.FTXAR_UI.closeModals()">✕</button>
+        </div>
+        <div class="ftx-modal-body">
+            <div class="ftx-form-group">
+                <label>任務名称</label>
+                <input type="text" id="fm-input-title" value="第1射撃任務 (155mm 各個効力射)">
+            </div>
+            
+            <div class="ftx-form-row">
+                <div class="ftx-form-group half">
+                    <label>目標方位角 (ミル)</label>
+                    <input type="number" id="fm-input-bearing" value="0" min="0" max="6400">
+                </div>
+                <div class="ftx-form-group half">
+                    <label>目標距離 (m)</label>
+                    <input type="number" id="fm-input-distance" value="200" min="50" max="25000">
+                </div>
+            </div>
+
+            <div class="ftx-form-row">
+                <div class="ftx-form-group half">
+                    <label>弾種</label>
+                    <select id="fm-input-ammo">
+                        <option value="155HE" selected>155mm HE (榴弾)</option>
+                        <option value="120HE">120mm HE (迫撃砲弾)</option>
+                        <option value="155SMK">155mm SMK (煙幕弾)</option>
+                    </select>
+                </div>
+                <div class="ftx-form-group half">
+                    <label>信管</label>
+                    <select id="fm-input-fuse" onchange="window.FTXAR_UI.onFuseChange()">
+                        <option value="CVT" selected>CVT (接近曳火)</option>
+                        <option value="Q">Q (瞬発)</option>
+                        <option value="Ti">Ti (時限曳火)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="ftx-form-row" id="row-burst-height">
+                <div class="ftx-form-group half">
+                    <label>基準破裂高 (m)</label>
+                    <input type="number" id="fm-input-burst-height" value="7.0" step="0.5">
+                </div>
+                <div class="ftx-form-group half">
+                    <label>破裂高公差 (±m)</label>
+                    <input type="number" id="fm-input-burst-jitter" value="2.0" step="0.5">
+                </div>
+            </div>
+
+            <div class="ftx-form-row">
+                <div class="ftx-form-group half">
+                    <label>門数 (門)</label>
+                    <input type="number" id="fm-input-guns" value="5" min="1" max="8">
+                </div>
+                <div class="ftx-form-group half">
+                    <label>射向束幅 (m)</label>
+                    <input type="number" id="fm-input-sheaf" value="45.0" step="1">
+                </div>
+            </div>
+
+            <div class="ftx-form-row">
+                <div class="ftx-form-group half">
+                    <label>長軸方位角 (ミル)</label>
+                    <input type="number" id="fm-input-axis" value="800" min="0" max="6400">
+                </div>
+                <div class="ftx-form-group half">
+                    <label>弾着角 (ミル)</label>
+                    <input type="number" id="fm-input-angle" value="800" min="100" max="1400">
+                </div>
+            </div>
+
+            <div class="ftx-form-row">
+                <div class="ftx-form-group half">
+                    <label>PER (射距離公算誤差 m)</label>
+                    <input type="number" id="fm-input-per" value="25.0" step="1">
+                </div>
+                <div class="ftx-form-group half">
+                    <label>PED (方向公算誤差 m)</label>
+                    <input type="number" id="fm-input-ped" value="3.0" step="0.5">
+                </div>
+            </div>
+
+            <div class="ftx-form-row">
+                <div class="ftx-form-group half">
+                    <label>発射間隔 (秒)</label>
+                    <input type="number" id="fm-input-interval" value="12.0" min="3" max="60">
+                </div>
+                <div class="ftx-form-group half">
+                    <label>発射間隔ジッター (±秒)</label>
+                    <input type="number" id="fm-input-interval-jitter" value="3.0" min="0" max="10">
+                </div>
+            </div>
+
+            <div class="ftx-form-group">
+                <label>発射弾数 (斉射回数)</label>
+                <select id="fm-input-rounds">
+                    <option value="-1" selected>無制限 (継続効力射)</option>
+                    <option value="1">1斉射 (初弾効力射)</option>
+                    <option value="3">3斉射</option>
+                    <option value="5">5斉射</option>
+                    <option value="10">10斉射</option>
+                </select>
+            </div>
+        </div>
+        <div class="ftx-modal-footer">
+            <button class="ftx-btn-secondary" onclick="window.FTXAR_UI.resetToDefaultForm()">デフォルト値</button>
+            <button class="ftx-btn-primary" onclick="window.FTXAR_UI.submitFireMission()">射撃命令 発動</button>
+        </div>
+    </div>
+</div>
+
+<!-- 2. 射撃任務 一覧モーダル -->
+<div id="modal-mission-list" class="ftx-modal" style="display: none;">
+    <div class="ftx-modal-content">
+        <div class="ftx-modal-header">
+            <span class="ftx-modal-title">射撃任務 一覧 & 統制</span>
+            <button class="ftx-modal-close" onclick="window.FTXAR_UI.closeModals()">✕</button>
+        </div>
+        <div class="ftx-modal-body" id="mission-list-container">
+            <div style="text-align: center; color: #888; padding: 20px;">任務を読み込み中...</div>
+        </div>
+        <div class="ftx-modal-footer">
+            <button class="ftx-btn-secondary" onclick="window.FTXAR_UI.openModal('modal-mission-create')">+ 新規任務</button>
+            <button class="ftx-btn-primary" onclick="window.FTXAR_UI.closeModals()">閉じる</button>
+        </div>
+    </div>
+</div>
+
+<!-- 3. 電子コンパス キャリブレーション モーダル -->
+<div id="modal-calibration" class="ftx-modal" style="display: none;">
+    <div class="ftx-modal-content">
+        <div class="ftx-modal-header">
+            <span class="ftx-modal-title">電子コンパス 多重校正 (Calibration)</span>
+            <button class="ftx-modal-close" onclick="window.FTXAR_UI.closeModals()">✕</button>
+        </div>
+        <div class="ftx-modal-body">
+            <p style="font-size: 0.85em; color: #bbb; margin-bottom: 12px;">
+                照準レティクルを校正基準（天体または名山）に向け、「校正実行」をタップしてください。
+            </p>
+            <div class="ftx-form-group">
+                <label>校正基準の選択</label>
+                <select id="cal-target-select" onchange="window.FTXAR_UI.onCalTargetChange()">
+                    <option value="sun">太陽 (Sun)</option>
+                    <option value="moon">月 (Moon)</option>
+                    <option value="polaris">北極星 (Polaris / 真北)</option>
+                    <optgroup label="著明な山 (名峰)">
+                        <option value="mt_0">富士山 (剣ヶ峰)</option>
+                        <option value="mt_1">大山 (鳥取県)</option>
+                        <option value="mt_2">阿蘇山 (中岳)</option>
+                        <option value="mt_3">由布岳</option>
+                        <option value="mt_4">乗鞍岳</option>
+                        <option value="mt_5">槍ヶ岳</option>
+                        <option value="mt_6">鳥海山</option>
+                        <option value="mt_7">岩手山</option>
+                        <option value="mt_8">羊蹄山</option>
+                        <option value="mt_10">筑波山</option>
+                        <option value="mt_11">箱根山</option>
+                    </optgroup>
+                </select>
+            </div>
+
+            <div class="ftx-cal-info-box">
+                <div class="cal-row"><span>基準の理論方位:</span> <strong id="cal-ref-bearing">-- mil</strong></div>
+                <div class="cal-row"><span>基準の理論仰角:</span> <strong id="cal-ref-elevation">-- mil</strong></div>
+                <div class="cal-row"><span>現在の端末方位:</span> <strong id="cal-cur-bearing">-- mil</strong></div>
+                <div class="cal-row"><span>適用中オフセット:</span> <strong id="cal-cur-offset">0.0°</strong></div>
+            </div>
+        </div>
+        <div class="ftx-modal-footer">
+            <button class="ftx-btn-secondary" onclick="window.FTXAR_UI.resetCompassCalibration()">リセット</button>
+            <button class="ftx-btn-primary" onclick="window.FTXAR_UI.executeCalibration()">校正 実行</button>
+        </div>
+    </div>
+</div>
+
+<!-- 4. QRコード 共有モーダル -->
+<div id="modal-qr" class="ftx-modal" style="display: none;">
+    <div class="ftx-modal-content" style="text-align: center;">
+        <div class="ftx-modal-header">
+            <span class="ftx-modal-title">QRコード URL共有</span>
+            <button class="ftx-modal-close" onclick="window.FTXAR_UI.closeModals()">✕</button>
+        </div>
+        <div class="ftx-modal-body" style="padding: 20px 10px;">
+            <p style="font-size: 0.85em; color: #bbb; margin-bottom: 15px;">
+                他のスマートフォンでスキャンすると、同一の射撃任務・弾着アニメーションを完全に同期して観測できます。
+            </p>
+            <div id="qr-code-display" style="display: flex; justify-content: center; margin-bottom: 15px;">
+                <img id="qr-image" src="" alt="QR Code" style="width: 200px; height: 200px; border-radius: 8px; border: 2px solid #00ff88; background: #fff; padding: 8px;">
+            </div>
+            <input type="text" id="qr-url-text" readonly style="width: 90%; background: #222; color: #00ff88; border: 1px solid #444; border-radius: 4px; padding: 6px; font-family: monospace; font-size: 0.8em; text-align: center;">
+        </div>
+        <div class="ftx-modal-footer">
+            <button class="ftx-btn-primary" onclick="window.FTXAR_UI.copyShareUrl()">URLコピー</button>
+        </div>
+    </div>
+</div>
+
+
+    <!-- モジュールスクリプト群の埋め込み -->
+    <script>
+/**
+ * FTXAR - MGRS & GRS80 Geodesic Module
+ * Version: 2610082015
+ * 
+ * UTM / MGRS 相互変換および測地計算
+ * フォーマット: 54S UE 00,000 - 00,000 H1234
+ */
+
+(function(window) {
+    'use strict';
+
+    const GRS80 = {
+        a: 6378137.0,          // 長半径
+        rf: 298.257222101,     // 逆扁平率
+        k0: 0.9996             // UTM縮尺係数
+    };
+    GRRS_INIT();
+
+    function GRRS_INIT() {
+        GRS80.b = GRS80.a * (1.0 - 1.0 / GRS80.rf);
+        GRS80.e2 = (Math.pow(GRS80.a, 2) - Math.pow(GRS80.b, 2)) / Math.pow(GRS80.a, 2);
+        GRS80.ep2 = (Math.pow(GRS80.a, 2) - Math.pow(GRS80.b, 2)) / Math.pow(GRS80.b, 2);
+    }
+
+    /**
+     * UTMゾーン番号取得
+     */
+    function getUtmZone(lat, lng) {
+        return Math.floor((lng + 180.0) / 6.0) + 1;
+    }
+
+    /**
+     * MGRSグリッドゾーン指定子 (GZD) 取得
+     */
+    function getMGRSGridZoneDesignator(lat) {
+        if (lat < -80 || lat >= 84) return 'X';
+        const BANDS = "CDEFGHJKLMNPQRSTUVWX";
+        let idx = Math.floor((lat + 80.0) / 8.0);
+        if (idx > 19) idx = 19;
+        return BANDS.charAt(idx);
+    }
+
+    /**
+     * 100km平方区画の2文字ペア取得
+     */
+    function getMGRSSquareLetters(zone, easting, northing) {
+        const SET1 = "ABCDEFGH";
+        const SET2 = "JKLMNPQR";
+        const SET3 = "STUVWXYZ";
+        const EVEN_ROWS = "FGHJKLMNPQRSTUVABCDE";
+        const ODD_ROWS  = "ABCDEFGHJKLMNPQRSTUV";
+
+        const eCode = Math.floor(easting / 100000);
+        let colLetter = "";
+        const zMod = zone % 3;
+        if (zMod === 1) colLetter = SET1.charAt(eCode - 1);
+        else if (zMod === 2) colLetter = SET2.charAt(eCode - 1);
+        else colLetter = SET3.charAt(eCode - 1);
+
+        const nCode = Math.floor(northing / 100000) % 20;
+        let rowLetter = (zone % 2 === 0) ? EVEN_ROWS.charAt(nCode) : ODD_ROWS.charAt(nCode);
+
+        return colLetter + rowLetter;
+    }
+
+    /**
+     * 緯度経度からUTM座標計算
+     */
+    function latLngToUTM(lat, lng, forceZone) {
+        const zone = forceZone || getUtmZone(lat, lng);
+        const lon0 = (zone - 1) * 6 - 180 + 3;
+
+        const latRad = lat * (Math.PI / 180.0);
+        const lngRad = lng * (Math.PI / 180.0);
+        const lon0Rad = lon0 * (Math.PI / 180.0);
+
+        const a = GRS80.a;
+        const e2 = GRS80.e2;
+        const k0 = GRS80.k0;
+
+        const N = a / Math.sqrt(1.0 - e2 * Math.pow(Math.sin(latRad), 2));
+        const T = Math.pow(Math.tan(latRad), 2);
+        const C = GRS80.ep2 * Math.pow(Math.cos(latRad), 2);
+        const A = Math.cos(latRad) * (lngRad - lon0Rad);
+
+        const M = a * (
+            (1.0 - e2 / 4.0 - 3.0 * Math.pow(e2, 2) / 64.0 - 5.0 * Math.pow(e2, 3) / 256.0) * latRad
+            - (3.0 * e2 / 8.0 + 3.0 * Math.pow(e2, 2) / 32.0 + 45.0 * Math.pow(e2, 3) / 1024.0) * Math.sin(2.0 * latRad)
+            + (15.0 * Math.pow(e2, 2) / 256.0 + 45.0 * Math.pow(e2, 3) / 1024.0) * Math.sin(4.0 * latRad)
+            - (35.0 * Math.pow(e2, 3) / 3072.0) * Math.sin(6.0 * latRad)
+        );
+
+        const x = k0 * N * (
+            A + (1.0 - T + C) * Math.pow(A, 3) / 6.0
+            + (5.0 - 18.0 * T + Math.pow(T, 2) + 72.0 * C - 58.0 * GRS80.ep2) * Math.pow(A, 5) / 120.0
+        ) + 500000.0;
+
+        let y = k0 * (
+            M + N * Math.tan(latRad) * (
+                Math.pow(A, 2) / 2.0
+                + (5.0 - T + 9.0 * C + 4.0 * Math.pow(C, 2)) * Math.pow(A, 4) / 24.0
+                + (61.0 - 58.0 * T + Math.pow(T, 2) + 600.0 * C - 330.0 * GRS80.ep2) * Math.pow(A, 6) / 720.0
+            )
+        );
+        if (lat < 0) y += 10000000.0;
+
+        const dLng = lngRad - lon0Rad;
+        const gamma = dLng * Math.sin(latRad) + (Math.pow(dLng, 3) / 3.0) * Math.sin(latRad) * Math.pow(Math.cos(latRad), 2);
+
+        return {
+            zone: zone,
+            hemisphere: lat >= 0 ? 'N' : 'S',
+            easting: x,
+            northing: y,
+            convergence: gamma
+        };
+    }
+
+    /**
+     * MGRS標準フォーマット生成: 54S UE 00,000 - 00,000 H1234
+     * @param {number} lat 緯度
+     * @param {number} lng 経度
+     * @param {number} [alt=0] 標高(m)
+     * @return {string}
+     */
+    function formatMGRS(lat, lng, alt) {
+        if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) {
+            return '-- - ----- - ----- H----';
+        }
+        const utm = latLngToUTM(lat, lng);
+        const gzd = utm.zone + getMGRSGridZoneDesignator(lat);
+        const sq = getMGRSSquareLetters(utm.zone, utm.easting, utm.northing);
+
+        const eRem = Math.floor(utm.easting % 100000);
+        const nRem = Math.floor(utm.northing % 100000);
+
+        // 00,000 形式 (2桁 + カンマ + 3桁)
+        const format5Digit = function(val) {
+            const s = Math.max(0, Math.min(99999, Math.round(val))).toString().padStart(5, '0');
+            return s.substring(0, 2) + ',' + s.substring(2);
+        };
+
+        const eStr = format5Digit(eRem);
+        const nStr = format5Digit(nRem);
+        const hVal = (typeof alt === 'number' && !isNaN(alt)) ? Math.round(alt) : 0;
+        const hStr = 'H' + (hVal >= 0 ? hVal.toString().padStart(4, '0') : hVal.toString());
+
+        return gzd + ' ' + sq + ' ' + eStr + ' - ' + nStr + ' ' + hStr;
+    }
+
+    /**
+     * 2地点間の大圏距離(m)および初期真方位角(rad/deg)
+     */
+    function calcDistanceAndBearing(lat1, lng1, lat2, lng2) {
+        const phi1 = lat1 * Math.PI / 180.0;
+        const phi2 = lat2 * Math.PI / 180.0;
+        const lam1 = lng1 * Math.PI / 180.0;
+        const lam2 = lng2 * Math.PI / 180.0;
+        const dLam = lam2 - lam1;
+
+        const sinPhi1 = Math.sin(phi1), cosPhi1 = Math.cos(phi1);
+        const sinPhi2 = Math.sin(phi2), cosPhi2 = Math.cos(phi2);
+        const cosDlam = Math.cos(dLam), sinDlam = Math.sin(dLam);
+
+        const deltaSigma = Math.atan2(
+            Math.sqrt(Math.pow(cosPhi2 * sinDlam, 2) + Math.pow(cosPhi1 * sinPhi2 - sinPhi1 * cosPhi2 * cosDlam, 2)),
+            sinPhi1 * sinPhi2 + cosPhi1 * cosPhi2 * cosDlam
+        );
+        const distance = GRS80.a * deltaSigma;
+
+        const y = sinDlam * cosPhi2;
+        const x = cosPhi1 * sinPhi2 - sinPhi1 * cosPhi2 * cosDlam;
+        let bearingRad = Math.atan2(y, x);
+        if (bearingRad < 0) bearingRad += 2.0 * Math.PI;
+
+        const bearingDeg = bearingRad * (180.0 / Math.PI);
+        const bearingMil = Math.round(bearingRad * (6400.0 / (2.0 * Math.PI))) % 6400;
+
+        return {
+            distance: distance,
+            bearingRad: bearingRad,
+            bearingDeg: bearingDeg,
+            bearingMil: bearingMil
+        };
+    }
+
+    /**
+     * 基準点から指定方位(ミル)および距離(m)の目標地点の緯度経度を算出 (正野計算)
+     */
+    function destinationPoint(lat, lng, distanceM, bearingMil) {
+        const rad = bearingMil * (2.0 * Math.PI / 6400.0);
+        const delta = distanceM / GRS80.a; // 角距離
+
+        const phi1 = lat * Math.PI / 180.0;
+        const lam1 = lng * Math.PI / 180.0;
+
+        const sinPhi1 = Math.sin(phi1), cosPhi1 = Math.cos(phi1);
+        const sinDelta = Math.sin(delta), cosDelta = Math.cos(delta);
+
+        const phi2 = Math.asin(sinPhi1 * cosDelta + cosPhi1 * sinDelta * Math.cos(rad));
+        const y = Math.sin(rad) * sinDelta * cosPhi1;
+        const x = cosDelta - sinPhi1 * Math.sin(phi2);
+        const lam2 = lam1 + Math.atan2(y, x);
+
+        return {
+            lat: phi2 * (180.0 / Math.PI),
+            lng: ((lam2 * (180.0 / Math.PI) + 540.0) % 360.0) - 180.0
+        };
+    }
+
+    /**
+     * 日本周辺の磁針偏角計算 (国土地理院 2020.0 近似式)
+     * @return {number} [mil]
+     */
+    function calculateMagneticDeclination(lat, lng) {
+        if (lat >= 20 && lat <= 50 && lng >= 120 && lng <= 150) {
+            const dLat = lat - 37.0;
+            const dLng = lng - 138.0;
+            const decMinutes = 498.2 + 21.0 * dLat - 6.1 * dLng - 0.4 * Math.pow(dLat, 2) - 0.5 * dLat * dLng - 0.6 * Math.pow(dLng, 2);
+            const decDegrees = decMinutes / 60.0;
+            return -(decDegrees * (6400.0 / 360.0));
+        }
+        return -130.0; // デフォルト約 -7.3度 (約 -130 mil)
+    }
+
+    // グローバル公開
+    window.FTXAR_MGRS = {
+        latLngToUTM: latLngToUTM,
+        formatMGRS: formatMGRS,
+        calcDistanceAndBearing: calcDistanceAndBearing,
+        destinationPoint: destinationPoint,
+        calculateMagneticDeclination: calculateMagneticDeclination
+    };
+
+})(window);
+</script>
+
+    <script>
+/**
+ * FTXAR - Astronomy & Mountain Target Module (astro.html)
+ * Version: 2610082015
+ * 
+ * 太陽、月、北極星、著明な山の視位置・方位角計算
+ */
+
+(function(window) {
+    'use strict';
+
+    const DEG2RAD = Math.PI / 180.0;
+    const RAD2DEG = 180.0 / Math.PI;
+
+    // 著明な山データベース (日本各地の名峰・主要ランドマーク)
+    const PROMINENT_MOUNTAINS = [
+        { name: "富士山 (剣ヶ峰)", lat: 35.360556, lng: 138.727778, alt: 3776 },
+        { name: "大山 (鳥取県)", lat: 35.370833, lng: 133.538333, alt: 1729 },
+        { name: "阿蘇山 (中岳)", lat: 32.884167, lng: 131.085833, alt: 1592 },
+        { name: "由布岳", lat: 33.281667, lng: 131.390833, alt: 1583 },
+        { name: "乗鞍岳 (剣ヶ峰)", lat: 36.106667, lng: 137.554167, alt: 3026 },
+        { name: "槍ヶ岳", lat: 36.335556, lng: 137.647778, alt: 3180 },
+        { name: "鳥海山", lat: 39.098889, lng: 140.048889, alt: 2236 },
+        { name: "岩手山", lat: 39.853056, lng: 141.001667, alt: 2038 },
+        { name: "羊蹄山", lat: 42.827222, lng: 140.812222, alt: 1898 },
+        { name: "大雪山 (旭岳)", lat: 43.663889, lng: 142.855000, alt: 2291 },
+        { name: "筑波山 (男体山)", lat: 36.225556, lng: 140.106944, alt: 871 },
+        { name: "箱根山 (神山)", lat: 35.234444, lng: 139.019722, alt: 1438 },
+        { name: "立山 (大汝山)", lat: 36.577222, lng: 137.620000, alt: 3015 },
+        { name: "白山 (御前峰)", lat: 36.155000, lng: 136.772222, alt: 2702 },
+        { name: "開聞岳", lat: 31.179444, lng: 130.528056, alt: 924 }
+    ];
+
+    /**
+     * ユリウス日と経過世紀 T (J2000.0)
+     */
+    function getEpoch(dateMs) {
+        const jd = (dateMs / 86400000.0) + 2440587.5;
+        const d = jd - 2451545.0;
+        const T = d / 36525.0;
+        return { jd: jd, d: d, T: T };
+    }
+
+    /**
+     * グリニッジ視恒星時 GAST (ラジアン)
+     */
+    function getGAST(d, T) {
+        let gmst0 = 280.46061837 + 360.98564736629 * d + 0.000387933 * T * T - (T * T * T) / 38710000.0;
+        gmst0 = ((gmst0 % 360.0) + 360.0) % 360.0;
+        return gmst0 * DEG2RAD;
+    }
+
+    /**
+     * 赤道座標 (RA, Dec) から地平座標 (Azimuth, Altitude) への変換
+     * @return { azRad, altRad, azDeg, altDeg, azMil }
+     */
+    function equatorialToHorizontal(ra, dec, lat, lng, dateMs) {
+        const ep = getEpoch(dateMs);
+        const gast = getGAST(ep.d, ep.T);
+        const localSiderealRad = gast + (lng * DEG2RAD);
+        let hourAngle = localSiderealRad - ra;
+        hourAngle = ((hourAngle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+
+        const latRad = lat * DEG2RAD;
+        const sinAlt = Math.sin(latRad) * Math.sin(dec) + Math.cos(latRad) * Math.cos(dec) * Math.cos(hourAngle);
+        const altRad = Math.asin(Math.max(-1.0, Math.min(1.0, sinAlt)));
+
+        const cosAlt = Math.cos(altRad);
+        let azRad = 0;
+        if (Math.abs(cosAlt) > 1e-6) {
+            const sinAz = -Math.cos(dec) * Math.sin(hourAngle) / cosAlt;
+            const cosAz = (Math.sin(dec) - Math.sin(latRad) * sinAlt) / (Math.cos(latRad) * cosAlt);
+            azRad = Math.atan2(sinAz, cosAz);
+            if (azRad < 0) azRad += 2.0 * Math.PI;
+        }
+
+        const azDeg = azRad * RAD2DEG;
+        const altDeg = altRad * RAD2DEG;
+        const azMil = Math.round(azRad * (6400.0 / (2.0 * Math.PI))) % 6400;
+
+        return {
+            azRad: azRad,
+            altRad: altRad,
+            azDeg: azDeg,
+            altDeg: altDeg,
+            azMil: azMil
+        };
+    }
+
+    /**
+     * 太陽の地平座標計算
+     */
+    function getSunPosition(lat, lng, dateMs) {
+        const ep = getEpoch(dateMs);
+        const T = ep.T;
+
+        let L0 = 280.46646 + 36000.76983 * T;
+        let M = 357.52911 + 35999.05029 * T;
+        L0 = ((L0 % 360.0) + 360.0) % 360.0;
+        M = ((M % 360.0) + 360.0) % 360.0;
+
+        const M_rad = M * DEG2RAD;
+        const C = (1.914602 - 0.004817 * T) * Math.sin(M_rad)
+                + (0.019993 - 0.000101 * T) * Math.sin(2.0 * M_rad)
+                + 0.000289 * Math.sin(3.0 * M_rad);
+        const TrueL = L0 + C;
+
+        const Omega = 125.04452 - 1934.136261 * T;
+        const Omega_rad = Omega * DEG2RAD;
+        let Lambda = TrueL - 0.00569 - 0.00478 * Math.sin(Omega_rad);
+        Lambda = ((Lambda % 360.0) + 360.0) % 360.0;
+        const Lambda_rad = Lambda * DEG2RAD;
+
+        const Eps0 = 23.439291 - 0.0130042 * T;
+        const Eps = Eps0 + 0.00256 * Math.cos(Omega_rad);
+        const Eps_rad = Eps * DEG2RAD;
+
+        const ra = Math.atan2(Math.cos(Eps_rad) * Math.sin(Lambda_rad), Math.cos(Lambda_rad));
+        const dec = Math.asin(Math.sin(Eps_rad) * Math.sin(Lambda_rad));
+
+        return equatorialToHorizontal(ra, dec, lat, lng, dateMs);
+    }
+
+    /**
+     * 月の地平座標計算 (簡約視位置)
+     */
+    function getMoonPosition(lat, lng, dateMs) {
+        const ep = getEpoch(dateMs);
+        const T = ep.T;
+
+        // 月の平均軌道要素
+        let L_prime = 218.3164477 + 481267.88123421 * T;
+        let D = 297.8501921 + 445267.1114034 * T;
+        let M = 357.5291092 + 35999.0502909 * T;
+        let M_prime = 134.9633964 + 477198.8675055 * T;
+        let F = 93.2720950 + 483202.0175233 * T;
+
+        L_prime = ((L_prime % 360.0) + 360.0) % 360.0;
+        D = ((D % 360.0) + 360.0) % 360.0;
+        M = ((M % 360.0) + 360.0) % 360.0;
+        M_prime = ((M_prime % 360.0) + 360.0) % 360.0;
+        F = ((F % 360.0) + 360.0) % 360.0;
+
+        const D_rad = D * DEG2RAD;
+        const M_rad = M * DEG2RAD;
+        const Mp_rad = M_prime * DEG2RAD;
+        const F_rad = F * DEG2RAD;
+
+        // 主要周期的摂動項
+        let lon = L_prime 
+            + 6.288774 * Math.sin(Mp_rad) 
+            + 1.274027 * Math.sin(2.0 * D_rad - Mp_rad)
+            + 0.658314 * Math.sin(2.0 * D_rad)
+            + 0.213618 * Math.sin(2.0 * Mp_rad)
+            - 0.185116 * Math.sin(M_rad)
+            - 0.114332 * Math.sin(2.0 * F_rad);
+
+        let latM = 5.128122 * Math.sin(F_rad)
+            + 0.280602 * Math.sin(Mp_rad + F_rad)
+            + 0.277693 * Math.sin(Mp_rad - F_rad)
+            + 0.173237 * Math.sin(2.0 * D_rad - F_rad);
+
+        lon = ((lon % 360.0) + 360.0) % 360.0;
+        const lonRad = lon * DEG2RAD;
+        const latMRad = latM * DEG2RAD;
+
+        const Eps = (23.439291 - 0.0130042 * T) * DEG2RAD;
+        const ra = Math.atan2(Math.sin(lonRad) * Math.cos(Eps) - Math.tan(latMRad) * Math.sin(Eps), Math.cos(lonRad));
+        const dec = Math.asin(Math.sin(latMRad) * Math.cos(Eps) + Math.cos(latMRad) * Math.sin(Eps) * Math.sin(lonRad));
+
+        return equatorialToHorizontal(ra, dec, lat, lng, dateMs);
+    }
+
+    /**
+     * 北極星 (Polaris) の地平座標計算 (歳差補正)
+     */
+    function getPolarisPosition(lat, lng, dateMs) {
+        const ep = getEpoch(dateMs);
+        const T = ep.T;
+
+        // J2000.0: RA = 2h 31m 49.09s, Dec = +89° 15' 50.8"
+        // 歳差補正 (赤経・赤緯の年差)
+        const ra2000 = (2.0 + 31.0 / 60.0 + 49.09 / 3600.0) * 15.0 * DEG2RAD;
+        const dec2000 = (89.0 + 15.0 / 60.0 + 50.8 / 3600.0) * DEG2RAD;
+
+        // 概略歳差運動 (T: 世紀数)
+        const dRa = (3.075 + 1.336 * Math.sin(ra2000) * Math.tan(dec2000)) * (T * 100.0) * (15.0 / 3600.0) * DEG2RAD;
+        const dDec = (20.04 * Math.cos(ra2000)) * (T * 100.0) * (1.0 / 3600.0) * DEG2RAD;
+
+        const ra = ra2000 + dRa;
+        const dec = dec2000 + dDec;
+
+        return equatorialToHorizontal(ra, dec, lat, lng, dateMs);
+    }
+
+    /**
+     * 現在地から指定山頂への方位角・仰角・距離計算
+     */
+    function getMountainTargetInfo(userLat, userLng, userAlt, mtn) {
+        if (!window.FTXAR_MGRS) return null;
+        const res = window.FTXAR_MGRS.calcDistanceAndBearing(userLat, userLng, mtn.lat, mtn.lng);
+        const dAlt = (mtn.alt || 0) - (userAlt || 0);
+        // 地球曲率降下補正: drop = d^2 / (2 * R)
+        const drop = Math.pow(res.distance, 2) / 12756274.0;
+        const effDAlt = dAlt - drop;
+        const elevAngleRad = Math.atan2(effDAlt, res.distance);
+        const elevAngleDeg = elevAngleRad * RAD2DEG;
+        const elevAngleMil = Math.round(elevAngleRad * (6400.0 / (2.0 * Math.PI)));
+
+        return {
+            name: mtn.name,
+            distance: res.distance,
+            bearingRad: res.bearingRad,
+            bearingDeg: res.bearingDeg,
+            bearingMil: res.bearingMil,
+            elevAngleRad: elevAngleRad,
+            elevAngleDeg: elevAngleDeg,
+            elevAngleMil: elevAngleMil
+        };
+    }
+
+    // グローバル公開
+    window.FTXAR_ASTRO = {
+        PROMINENT_MOUNTAINS: PROMINENT_MOUNTAINS,
+        getSunPosition: getSunPosition,
+        getMoonPosition: getMoonPosition,
+        getPolarisPosition: getPolarisPosition,
+        getMountainTargetInfo: getMountainTargetInfo
+    };
+
+})(window);
+</script>
+
+    <script>
+/**
+ * FTXAR - Weather & Wind Integration Module (weather.html)
+ * Version: 2610082045
+ * 
+ * Open-Meteo API による局地風向・風速・気象データの非同期フェッチ
+ */
+
+(function(window) {
+    'use strict';
+
+    var weatherCache = {
+        lat: null,
+        lng: null,
+        timestamp: 0,
+        data: {
+            windSpeed: 2.5,        // m/s
+            windDirectionDeg: 45.0, // 0:北, 90:東, 180:南, 270:西
+            temperature: 20.0,
+            humidity: 60.0
+        }
+    };
+
+    /**
+     * 指定座標の風向・風速データを取得 (Open-Meteo API)
+     */
+    async function fetchWeather(lat, lng, force) {
+        var now = Date.now();
+        // 10分以内かつ約1km以内の移動であればキャッシュを再利用
+        if (!force && weatherCache.lat !== null && (now - weatherCache.timestamp < 600000)) {
+            var dLat = Math.abs(lat - weatherCache.lat);
+            var dLng = Math.abs(lng - weatherCache.lng);
+            if (dLat < 0.01 && dLng < 0.01) {
+                return formatWeatherData(weatherCache.data);
+            }
+        }
+
+        // 文字列結合でURLを生成 (GASテンプレートエラーを完全防止)
+        var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat.toFixed(4) + 
+                  '&longitude=' + lng.toFixed(4) + 
+                  '&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m';
+
+        try {
+            var resp = await fetch(url, { cache: 'no-store' });
+            if (!resp.ok) throw new Error('Weather fetch HTTP error: ' + resp.status);
+            var json = await resp.json();
+            
+            if (json && json.current) {
+                weatherCache.lat = lat;
+                weatherCache.lng = lng;
+                weatherCache.timestamp = now;
+                weatherCache.data = {
+                    windSpeed: json.current.wind_speed_10m || 2.0,
+                    windDirectionDeg: json.current.wind_direction_10m || 45.0,
+                    temperature: json.current.temperature_2m || 18.0,
+                    humidity: json.current.relative_humidity_2m || 50.0
+                };
+                console.info("FTXAR Weather: Updated from Open-Meteo", weatherCache.data);
+            }
+        } catch (err) {
+            console.warn("FTXAR Weather: Failed to fetch Open-Meteo, using fallback default.", err);
+        }
+
+        return formatWeatherData(weatherCache.data);
+    }
+
+    /**
+     * 風向(風が吹いてくる方位)からThree.js座標系における煙の流動ベクトルを算出
+     */
+    function formatWeatherData(d) {
+        var speed = d.windSpeed;
+        var dirDeg = d.windDirectionDeg;
+        var flowDeg = (dirDeg + 180.0) % 360.0;
+        var flowRad = flowDeg * (Math.PI / 180.0);
+
+        var flowX = Math.sin(flowRad) * speed;
+        var flowZ = Math.cos(flowRad) * speed;
+
+        return {
+            windSpeed: speed,
+            windDirectionDeg: dirDeg,
+            flowDirectionDeg: flowDeg,
+            temperature: d.temperature,
+            humidity: d.humidity,
+            flowVector: { x: flowX, y: 0.8, z: flowZ } // y: 自然上昇流
+        };
+    }
+
+    // グローバル公開
+    window.FTXAR_WEATHER = {
+        fetchWeather: fetchWeather,
+        getLatestWeather: function() { return formatWeatherData(weatherCache.data); }
+    };
+
+})(window);
+</script>
+
+    <script>
+/**
+ * FTXAR - Terrain Elevation & Occlusion Engine (terrain_occlusion.html)
+ * Version: 2610082045
+ * 
+ * 国土地理院標高タイル(DEM5A/10B)の取得・デコード
+ * 不可視深度メッシュ(Depth Mask)による地形オクルージョン
+ * 最低地上高 (DEM + 1.0m) の自動維持
+ */
+
+(function(window) {
+    'use strict';
+
+    var TILE_CACHE = new Map();
+    var LOADING_PROMISES = new Map();
+    var MAX_CACHE_SIZE = 80;
+    var cacheKeysOrder = [];
+
+    // 地形オクルージョン状態
+    var occlusionState = {
+        isOcclusionEnabled: true,
+        isDebugWireframe: false,
+        terrainMesh: null,
+        wireframeMesh: null,
+        userDemAlt: null,
+        centerLat: null,
+        centerLng: null
+    };
+
+    /**
+     * 緯度経度からタイル座標(XYZ)への変換
+     */
+    function latLngToTile(lat, lng, zoom) {
+        var latRad = lat * Math.PI / 180.0;
+        var n = Math.pow(2, zoom);
+        var x = Math.floor((lng + 180.0) / 360.0 * n);
+        var y = Math.floor((1.0 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2.0 * n);
+        return { x: x, y: y, z: zoom };
+    }
+
+    /**
+     * タイル内のピクセル位置(0-255)
+     */
+    function latLngToPixel(lat, lng, zoom, tileX, tileY) {
+        var latRad = lat * Math.PI / 180.0;
+        var n = Math.pow(2, zoom);
+        var exactX = (lng + 180.0) / 360.0 * n;
+        var exactY = (1.0 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2.0 * n;
+        var px = Math.floor((exactX - tileX) * 256.0);
+        var py = Math.floor((exactY - tileY) * 256.0);
+        return {
+            px: Math.max(0, Math.min(255, px)),
+            py: Math.max(0, Math.min(255, py))
+        };
+    }
+
+    /**
+     * RGBピクセル値から標高(m)をデコード
+     */
+    function decodeElevation(r, g, b) {
+        var x = r * 65536 + g * 256 + b;
+        if (x === 8388608 || x === 0) return null; // 無効値
+        return (x < 8388608) ? (x * 0.01) : ((x - 16777216) * 0.01);
+    }
+
+    /**
+     * 標高タイルの画像フェッチ
+     */
+    function fetchTileImage(url) {
+        if (LOADING_PROMISES.has(url)) {
+            return LOADING_PROMISES.get(url);
+        }
+        var p = new Promise(function(resolve) {
+            var img = new Image();
+            img.crossOrigin = "Anonymous";
+            img.onload = function() {
+                var canvas = document.createElement("canvas");
+                canvas.width = 256;
+                canvas.height = 256;
+                var ctx = canvas.getContext("2d", { willReadFrequently: true });
+                ctx.drawImage(img, 0, 0);
+                var imgData = ctx.getImageData(0, 0, 256, 256);
+                resolve(imgData);
+            };
+            img.onerror = function() {
+                resolve(null);
+            };
+            img.src = url;
+        }).finally(function() {
+            LOADING_PROMISES.delete(url);
+        });
+
+        LOADING_PROMISES.set(url, p);
+        return p;
+    }
+
+    /**
+     * 国土地理院DEMタイルから標高(m)を取得 (DEM5A -> DEM5B -> DEM10B フォールバック)
+     */
+    async function getElevation(lat, lng) {
+        var zoom = 15;
+        var tile = latLngToTile(lat, lng, zoom);
+        var tileKey = zoom + '_' + tile.x + '_' + tile.y;
+
+        var imgData = TILE_CACHE.get(tileKey);
+        if (!imgData) {
+            var sources = [
+                'https://cyberjapandata.gsi.go.jp/xyz/dem5a_png/' + zoom + '/' + tile.x + '/' + tile.y + '.png',
+                'https://cyberjapandata.gsi.go.jp/xyz/dem5b_png/' + zoom + '/' + tile.x + '/' + tile.y + '.png',
+                'https://cyberjapandata.gsi.go.jp/xyz/dem_png/' + zoom + '/' + tile.x + '/' + tile.y + '.png'
+            ];
+
+            for (var i = 0; i < sources.length; i++) {
+                imgData = await fetchTileImage(sources[i]);
+                if (imgData) break;
+            }
+
+            if (imgData) {
+                if (TILE_CACHE.size >= MAX_CACHE_SIZE) {
+                    var oldest = cacheKeysOrder.shift();
+                    TILE_CACHE.delete(oldest);
+                }
+                TILE_CACHE.set(tileKey, imgData);
+                cacheKeysOrder.push(tileKey);
+            }
+        }
+
+        if (imgData) {
+            var pix = latLngToPixel(lat, lng, zoom, tile.x, tile.y);
+            var idx = (pix.py * 256 + pix.px) * 4;
+            var r = imgData.data[idx];
+            var g = imgData.data[idx + 1];
+            var b = imgData.data[idx + 2];
+            var elev = decodeElevation(r, g, b);
+            if (elev !== null) return elev;
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * 指定中心座標(観測者)を中心とするThree.js地形オクルージョンメッシュの構築
+     */
+    async function buildTerrainMesh(scene, centerLat, centerLng, radiusM, resolution) {
+        if (!radiusM) radiusM = 1500;
+        if (!resolution) resolution = 64;
+        if (!scene || typeof THREE === 'undefined') return;
+
+        occlusionState.centerLat = centerLat;
+        occlusionState.centerLng = centerLng;
+
+        var userAlt = await getElevation(centerLat, centerLng);
+        occlusionState.userDemAlt = userAlt;
+
+        if (occlusionState.terrainMesh) {
+            scene.remove(occlusionState.terrainMesh);
+            if (occlusionState.terrainMesh.geometry) occlusionState.terrainMesh.geometry.dispose();
+            if (occlusionState.terrainMesh.material) occlusionState.terrainMesh.material.dispose();
+            occlusionState.terrainMesh = null;
+        }
+        if (occlusionState.wireframeMesh) {
+            scene.remove(occlusionState.wireframeMesh);
+            if (occlusionState.wireframeMesh.geometry) occlusionState.wireframeMesh.geometry.dispose();
+            if (occlusionState.wireframeMesh.material) occlusionState.wireframeMesh.material.dispose();
+            occlusionState.wireframeMesh = null;
+        }
+
+        var size = radiusM * 2.0;
+        var geom = new THREE.PlaneGeometry(size, size, resolution, resolution);
+        geom.rotateX(-Math.PI / 2.0);
+
+        var posAttr = geom.attributes.position;
+        var vertexCount = posAttr.count;
+
+        var latMPerDeg = 111132.95;
+        var lngMPerDeg = 111412.84 * Math.cos(centerLat * Math.PI / 180.0);
+
+        var elevPromises = [];
+        var coords = [];
+
+        for (var i = 0; i < vertexCount; i++) {
+            var vx = posAttr.getX(i);
+            var vz = posAttr.getZ(i);
+
+            var ptLat = centerLat - (vz / latMPerDeg);
+            var ptLng = centerLng + (vx / lngMPerDeg);
+
+            coords.push({ x: vx, z: vz, lat: ptLat, lng: ptLng, idx: i });
+        }
+
+        for (var i = 0; i < coords.length; i++) {
+            elevPromises.push(getElevation(coords[i].lat, coords[i].lng));
+        }
+
+        var elevs = await Promise.all(elevPromises);
+
+        for (var i = 0; i < coords.length; i++) {
+            var h = elevs[i] !== null ? elevs[i] : userAlt;
+            var distXZ = Math.sqrt(coords[i].x * coords[i].x + coords[i].z * coords[i].z);
+            var drop = (distXZ * distXZ) / 12756274.0;
+            var relY = (h - userAlt) - drop;
+
+            posAttr.setY(coords[i].idx, relY);
+        }
+
+        geom.computeVertexNormals();
+
+        var occlusionMat = new THREE.MeshBasicMaterial({
+            colorWrite: false,
+            depthWrite: true,
+            depthTest: true
+        });
+
+        var terrainMesh = new THREE.Mesh(geom, occlusionMat);
+        terrainMesh.renderOrder = 0;
+        scene.add(terrainMesh);
+        occlusionState.terrainMesh = terrainMesh;
+
+        var wireMat = new THREE.MeshBasicMaterial({
+            color: 0x00ff88,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.25,
+            depthTest: true,
+            depthWrite: false
+        });
+        var wireMesh = new THREE.Mesh(geom.clone(), wireMat);
+        wireMesh.visible = occlusionState.isDebugWireframe;
+        wireMesh.renderOrder = 1;
+        scene.add(wireMesh);
+        occlusionState.wireframeMesh = wireMesh;
+
+        console.info("FTXAR Terrain: Built occlusion mesh (Radius " + radiusM + "m, Base Alt " + userAlt.toFixed(1) + "m)");
+        return userAlt;
+    }
+
+    /**
+     * 観測者から目標への視線(Line Of Sight)遮蔽判定
+     */
+    function checkLineOfSight(eyePos, targetPos) {
+        if (!occlusionState.terrainMesh || typeof THREE === 'undefined') return true;
+
+        var dir = new THREE.Vector3().subVectors(targetPos, eyePos);
+        var dist = dir.length();
+        dir.normalize();
+
+        var raycaster = new THREE.Raycaster(eyePos, dir, 0.5, dist);
+        var intersects = raycaster.intersectObject(occlusionState.terrainMesh, false);
+
+        if (intersects.length > 0) {
+            var hitDist = intersects[0].distance;
+            if (hitDist < dist - 2.0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * デバッグワイヤーフレーム表示トグル
+     */
+    function toggleDebugWireframe() {
+        occlusionState.isDebugWireframe = !occlusionState.isDebugWireframe;
+        if (occlusionState.wireframeMesh) {
+            occlusionState.wireframeMesh.visible = occlusionState.isDebugWireframe;
+        }
+        return occlusionState.isDebugWireframe;
+    }
+
+    // グローバル公開
+    window.FTXAR_TERRAIN = {
+        getElevation: getElevation,
+        buildTerrainMesh: buildTerrainMesh,
+        checkLineOfSight: checkLineOfSight,
+        toggleDebugWireframe: toggleDebugWireframe,
+        getState: function() { return occlusionState; }
+    };
+
+})(window);
+</script>
+
+    <script>
+/**
+ * FTXAR - Ballistics & Fire Mission Scheduler (ballistics.html)
+ * Version: 2610082045
+ * 
+ * 射撃任務諸元計算、公算誤差(PER/PED)付与、射向束展開、
+ * および「各個射 (ランダム弾着)」の絶対時刻タイムテーブル生成
+ */
+
+(function(window) {
+    'use strict';
+
+    /**
+     * 標準正規分布乱数 (ボックス＝ミュラー法)
+     */
+    function randomGaussian() {
+        var u = 0, v = 0;
+        while (u === 0) u = Math.random();
+        while (v === 0) v = Math.random();
+        return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+    }
+
+    /**
+     * デフォルト射撃任務の生成
+     * 要件: 自己位置から北に200m、155mm HE、曳火(CVT破裂高7m±2m)、
+     * 射向束45m、5門、弾着角800ミル、長軸800ミル、PER25m、PED3m、
+     * 発射間隔12秒±3秒、弾数無制限
+     * 射撃方法: 各個射 (ランダム弾着)
+     */
+    function createDefaultFireMission(userLat, userLng, userAlt, startDelayMs) {
+        if (startDelayMs === undefined) startDelayMs = 4000;
+
+        var targetPos = window.FTXAR_MGRS 
+            ? window.FTXAR_MGRS.destinationPoint(userLat, userLng, 200, 0)
+            : { lat: userLat + 0.0018, lng: userLng };
+
+        var targetAlt = userAlt || 50.0;
+        var now = Date.now();
+
+        return {
+            id: 'FM-' + now.toString(36).toUpperCase(),
+            title: '第1射撃任務 (155mm 各個効力射)',
+            status: 'ACTIVE',         // ACTIVE | CEASE_FIRE | COMPLETED
+            fireMethod: 'INDIVIDUAL', // INDIVIDUAL (各個射・ランダム弾着) | SALVO (斉射)
+            target: {
+                lat: targetPos.lat,
+                lng: targetPos.lng,
+                alt: targetAlt,
+                mgrs: window.FTXAR_MGRS ? window.FTXAR_MGRS.formatMGRS(targetPos.lat, targetPos.lng, targetAlt) : ''
+            },
+            ammo: '155HE',            // 155mm 榴弾
+            fuse: 'CVT',              // CVT (接近・曳火) | Q (瞬発) | Ti (時限)
+            burstHeight: 7.0,         // 破裂高 (m)
+            burstHeightJitter: 2.0,   // ±2m
+            gunCount: 5,              // 5門
+            sheafWidth: 45.0,         // 射向束 45m
+            axisAzimuthMil: 800,      // 長軸方位角 800ミル (約45°)
+            impactAngleMil: 800,      // 弾着角 800ミル
+            per: 25.0,                // 射距離公算誤差 25m
+            ped: 3.0,                 // 方向公算誤差 3m
+            intervalSec: 12.0,        // 発射間隔 12秒
+            intervalJitterSec: 3.0,   // ±3秒
+            roundCount: -1,           // -1: 弾数無制限 (継続射撃)
+            scheduledFirstImpactTime: now + startDelayMs, // 初弾着弾の絶対時刻 (UNIX ms)
+            createdAt: now
+        };
+    }
+
+    /**
+     * 射撃任務の指定サイクルにおける各砲門の弾着諸元(絶対時刻・座標・破裂高)を算出
+     * ★重要改修: 「各個射 (ランダム弾着)」により、同時着弾ではなく各門がランダムな時間差でバラバラに着弾する
+     */
+    function calculateSalvoImpacts(mission, cycleIndex, userLat, userLng, userAlt) {
+        var impacts = [];
+        var gunCount = mission.gunCount || 5;
+        var sheafWidth = mission.sheafWidth || 45.0;
+        var per = mission.per || 25.0;
+        var ped = mission.ped || 3.0;
+
+        var axisRad = (mission.axisAzimuthMil || 800) * (2.0 * Math.PI / 6400.0);
+        var perpRad = axisRad + (Math.PI / 2.0);
+
+        var cycleInterval = mission.intervalSec || 12.0;
+        var baseCycleTime = mission.scheduledFirstImpactTime + (cycleIndex * cycleInterval * 1000.0);
+
+        var latMPerDeg = 111132.95;
+        var lngMPerDeg = 111412.84 * Math.cos(userLat * Math.PI / 180.0);
+
+        var centerOffsetX = (mission.target.lng - userLng) * lngMPerDeg;
+        var centerOffsetZ = -(mission.target.lat - userLat) * latMPerDeg;
+        var centerOffsetY = (mission.target.alt - userAlt);
+
+        // 各個射 (ランダム弾着) の時間配分:
+        // サイクル時間 (例: 12秒) の中で、各砲門が均等かつランダムに分散して発射する
+        // 門ごとにシャッフルしたスロット時間を割り当て、さらに ±1.5秒のランダムジッターを付与
+        var slotWidth = (cycleInterval * 1000.0) / gunCount; // 例: 12000ms / 5 = 2400ms
+
+        for (var g = 0; g < gunCount; g++) {
+            // 1. 射向束による砲門配置
+            var sheafOffset = (gunCount > 1) 
+                ? ((g / (gunCount - 1)) - 0.5) * sheafWidth 
+                : 0;
+
+            var sx = Math.sin(perpRad) * sheafOffset;
+            var sz = -Math.cos(perpRad) * sheafOffset;
+
+            // 2. 公算誤差 (PER / PED)
+            var errorR = randomGaussian() * per;
+            var errorD = randomGaussian() * ped;
+
+            var rx = Math.sin(axisRad) * errorR + Math.sin(perpRad) * errorD;
+            var rz = -Math.cos(axisRad) * errorR - Math.cos(perpRad) * errorD;
+
+            var finalX = centerOffsetX + sx + rx;
+            var finalZ = centerOffsetZ + sz + rz;
+
+            // 3. 信管と破裂高
+            var finalBurstHeight = 0;
+            if (mission.fuse === 'CVT' || mission.fuse === 'Ti') {
+                var baseH = mission.burstHeight || 7.0;
+                var jitterH = (mission.burstHeightJitter || 2.0) * (Math.random() * 2.0 - 1.0);
+                finalBurstHeight = Math.max(1.0, baseH + jitterH);
+            }
+
+            var distXZ = Math.sqrt(finalX * finalX + finalZ * finalZ);
+            var drop = (distXZ * distXZ) / 12756274.0;
+            var finalY = centerOffsetY + finalBurstHeight - drop;
+
+            // 4. ★各個射ランダム着弾時刻の算出
+            // 砲門ごとに異なるスロット + ジッターで完全にバラバラに着弾させる
+            var baseGunSlotTime = g * slotWidth;
+            var gunJitterMs = (Math.random() * 2.0 - 1.0) * (slotWidth * 0.45); // スロット内のランダム揺らぎ
+            var impactTime = Math.round(baseCycleTime + baseGunSlotTime + gunJitterMs);
+
+            impacts.push({
+                missionId: mission.id,
+                salvoIndex: cycleIndex,
+                gunIndex: g,
+                impactTime: impactTime,
+                position: { x: finalX, y: finalY, z: finalZ },
+                groundY: centerOffsetY - drop,
+                burstHeight: finalBurstHeight,
+                fuse: mission.fuse,
+                ammo: mission.ammo,
+                isFired: false
+            });
+        }
+
+        // 着弾時刻順にソート
+        impacts.sort(function(a, b) { return a.impactTime - b.impactTime; });
+
+        return impacts;
+    }
+
+    // グローバル公開
+    window.FTXAR_BALLISTICS = {
+        createDefaultFireMission: createDefaultFireMission,
+        calculateSalvoImpacts: calculateSalvoImpacts
+    };
+
+})(window);
+</script>
+
+    <script>
+/**
+ * FTXAR - Impact Effects & Particle Engine (effects.html)
+ * Version: 2610082125
+ * 
+ * かんそくん本体 (v4 engine_effects.js) 完全準拠 砲兵弾着アニメーション
+ * 
+ * 【重要方針】
+ * - 「終末弾道.html」の爆風（ワイヤーフレーム球体・衝撃波ドーム・単一巨大球体メッシュ）は完全排除
+ * - かんそくん本体の矩形ビルボード（単色クアッド・面内回転）幾何学的パーティクル集約システムを忠実再現
+ * 
+ * 1. 共通火球 (isAirburstFireball): 10パーツ球形敷き詰め (中心コア3個 + 外殻7個/火の粉3個)
+ *    - 冷却指数 Ei = exp(-t / tau)
+ *    - 白熱芯(0.05s) -> 純橙色(0.15s) -> 鮮烈赤橙色(0.25s) -> 炭化漆黒(0.75-0.85s) + 火の粉点滅(1.30s)
+ * 2. 曳火空中破裂 (CVT / Ti Airburst):
+ *    - 副煙 (isAirburstSecondarySmoke): 20パーツ円錐形 (作動点最大半径 -> 進行方向に先細り), 灰色, 4.5-5.0s
+ *    - 主煙 (isAirburstMainSmoke): 20パーツ水平ドーナツ型, 黒色, 4.5-5.0s, 0.25s高エネルギー閃光照射
+ *    - 地表弾足 (debris): 破裂高 < 30m で地表から10-40パーツ白煙吹き上がり, 2.0-2.5s
+ * 3. 着発地表破裂 (Q Point Detonating):
+ *    - 爆発土煙 (isGroundDirtSmoke): 40パーツ, 3D初速+空気抵抗ドラッグ(k=4.5)+重力(0.5G)放物線運動
+ *      最大水平10m, 最大高度15m, 爆心0.15s純白->暗灰色, 0.8-1.5s
+ *    - 着発主煙 (isGroundMainSmoke): 24パーツ, 0.3s遅延発生, 半径1.5-7.5m, 黒-深灰色, 5.0s
+ *    - 地表弾足 (debris)
+ * 4. 風向風速 (Open-Meteo) による煙の自然流動および固有上昇 (1.0 m/s)
+ */
+
+(function(window) {
+    'use strict';
+
+    var activeEffects = [];
+
+    // 共通の1m四方正方形Planeジオメトリ (かんそくんの tgtVBuf [-0.5, -0.5, 0 ...] と同等)
+    var sharedQuadGeometry = null;
+    function getSharedQuadGeometry() {
+        if (!sharedQuadGeometry && typeof THREE !== 'undefined') {
+            sharedQuadGeometry = new THREE.PlaneGeometry(1.0, 1.0);
+        }
+        return sharedQuadGeometry;
+    }
+
+    /**
+     * 単色ビルボードメッシュの生成ヘルパー
+     */
+    function createBillboardMesh(colorHex, opacity, blending) {
+        var mat = new THREE.MeshBasicMaterial({
+            color: colorHex,
+            transparent: true,
+            opacity: opacity !== undefined ? opacity : 1.0,
+            side: THREE.DoubleSide,
+            depthTest: true,
+            depthWrite: false,
+            blending: blending || THREE.NormalBlending
+        });
+        var mesh = new THREE.Mesh(getSharedQuadGeometry(), mat);
+        return mesh;
+    }
+
+    /**
+     * 弾着エフェクトの発火 (一元統合エントリポイント)
+     * 
+     * @param {THREE.Scene} scene
+     * @param {Object} impact 着弾諸元 { position, groundY, burstHeight, fuse, ammo }
+     * @param {Object} [weatherData] 気象データ
+     */
+    function triggerImpact(scene, impact, weatherData) {
+        if (!scene || typeof THREE === 'undefined') return;
+
+        var pos = impact.position;
+        var groundY = (impact.groundY !== undefined) ? impact.groundY : (pos.y - 7.0);
+        var hob = Math.max(0, pos.y - groundY);
+        var isAirburst = (impact.fuse === 'CVT' || impact.fuse === 'Ti' || hob > 0.5);
+
+        // 口径スケール (155mm基準=1.1倍)
+        var calScale = 1.1;
+
+        // 風ベクトル (m/s)
+        var windVec = { x: 1.5, z: 1.5 };
+        if (weatherData && weatherData.windSpeed !== undefined && weatherData.windDirection !== undefined) {
+            // 気象風向（吹いてくる方角）から風下へのベクトル
+            var rad = (weatherData.windDirection + 180.0) * (Math.PI / 180.0);
+            windVec.x = Math.sin(rad) * weatherData.windSpeed * 0.4;
+            windVec.z = -Math.cos(rad) * weatherData.windSpeed * 0.4;
+        }
+
+        // 煙上昇速度 (m/s)
+        var riseSpeed = 1.0;
+
+        var effectGroup = new THREE.Group();
+        effectGroup.position.set(pos.x, pos.y, pos.z);
+        scene.add(effectGroup);
+
+        var startTime = performance.now();
+        var components = [];
+
+        // ========================================================
+        // 1. 火球 (Fireball) - 曳火・着発共通 (10パーツ球形敷き詰め)
+        // ========================================================
+        var fireballParticles = [];
+        var sphereRadius = 1.10 * calScale;
+
+        for (var i = 0; i < 10; i++) {
+            var isCore = (i < 3);
+            var isEmber = (i >= 7);
+            var rNorm, baseSize;
+
+            if (isCore) {
+                rNorm = Math.random() * 0.20;
+                baseSize = 1.30 * calScale;
+            } else {
+                rNorm = 0.30 + Math.random() * 0.55;
+                baseSize = 0.85 * calScale;
+            }
+
+            var theta = Math.random() * Math.PI * 2.0;
+            var phi = Math.acos(2.0 * Math.random() - 1.0);
+            var r = rNorm * sphereRadius;
+
+            var dx = r * Math.sin(phi) * Math.cos(theta);
+            var dy = r * Math.sin(phi) * Math.sin(theta);
+            var dz = r * Math.cos(phi);
+
+            var lifeSpan = isEmber ? (1.20 + Math.random() * 0.10) : (0.75 + Math.random() * 0.10);
+            var rotAngle = Math.random() * (Math.PI * 0.5);
+
+            var mesh = createBillboardMesh(0xffffff, 1.0);
+            mesh.position.set(dx, dy, dz);
+            effectGroup.add(mesh);
+
+            fireballParticles.push({
+                mesh: mesh,
+                dx: dx, dy: dy, dz: dz,
+                rNorm: rNorm,
+                baseSize: baseSize,
+                isCore: isCore,
+                isEmber: isEmber,
+                lifeSpan: lifeSpan,
+                rotAngle: rotAngle
+            });
+        }
+
+        components.push({
+            type: 'fireball',
+            particles: fireballParticles,
+            maxDuration: 1.35,
+            update: function(t, camera) {
+                for (var j = 0; j < this.particles.length; j++) {
+                    var p = this.particles[j];
+                    if (t > p.lifeSpan) {
+                        p.mesh.visible = false;
+                        continue;
+                    }
+                    p.mesh.visible = true;
+
+                    // サイズ計算
+                    var szCur = p.baseSize;
+                    if (p.isEmber) {
+                        var expandE = (t <= 0.05) ? (t / 0.05) : 1.0;
+                        var shrinkE = Math.max(0.20, 1.0 - 0.80 * (t / p.lifeSpan));
+                        szCur = p.baseSize * expandE * shrinkE;
+                    } else {
+                        var expand = (t <= 0.06) ? (t / 0.06) : 1.0;
+                        szCur = p.baseSize * expand;
+                    }
+                    p.mesh.scale.set(szCur, szCur, 1.0);
+
+                    // ビルボード回転 (カメラ向き + 面内回転)
+                    p.mesh.quaternion.copy(camera.quaternion);
+                    p.mesh.rotateZ(p.rotAngle);
+
+                    // 冷却指数 Ei
+                    var tau = p.isEmber ? 0.45 : (0.12 * Math.max(0.2, 1.0 - 0.5 * p.rNorm));
+                    var Ei = Math.exp(-t / tau);
+
+                    var rVal = 1.0, gVal = 0.5, bVal = 0.0, alphaVal = 1.0;
+
+                    if (p.rNorm <= 0.15 && t <= 0.05 && Ei > 0.80) {
+                        // 1. 最高温白熱芯 (黄金色〜純白)
+                        rVal = 1.0; gVal = 0.95; bVal = 0.70; alphaVal = 1.0;
+                    } else if (Ei > 0.55 && t <= 0.15) {
+                        // 2. 高エネルギー期 (純橙色)
+                        var k1 = (Ei - 0.55) / 0.45;
+                        rVal = 1.0; gVal = 0.28 + 0.18 * k1; bVal = 0.0; alphaVal = 1.0;
+                    } else if (Ei > 0.18 && t <= 0.25) {
+                        // 3. 主発光期 (鮮烈赤橙色)
+                        var k2 = (Ei - 0.18) / 0.37;
+                        rVal = 1.0; gVal = 0.08 + 0.20 * k2; bVal = 0.0; alphaVal = 0.95 + 0.05 * k2;
+                    } else if (p.isEmber) {
+                        // 4. 火の粉 (赤橙点滅)
+                        var remE = Math.max(0.0, (p.lifeSpan - t) / (p.lifeSpan * 0.65));
+                        var flicker = 0.85 + 0.15 * Math.sin(t * 35.0 + j);
+                        rVal = 0.95 * flicker;
+                        gVal = (0.04 + 0.10 * Ei) * flicker;
+                        bVal = 0.0;
+                        alphaVal = Math.min(1.0, remE * 1.3);
+                    } else {
+                        // 5. 炭化パーツ (漆黒の炭化塊)
+                        rVal = 0.02; gVal = 0.02; bVal = 0.02;
+                        var carbonAlpha = 0.85;
+                        if (t > 0.45) {
+                            carbonAlpha = Math.max(0.0, 0.85 * (p.lifeSpan - t) / Math.max(0.05, (p.lifeSpan - 0.45)));
+                        }
+                        alphaVal = carbonAlpha;
+                    }
+
+                    p.mesh.material.color.setRGB(rVal, gVal, bVal);
+                    p.mesh.material.opacity = alphaVal;
+                }
+            }
+        });
+
+        if (isAirburst) {
+            // ========================================================
+            // 2A. 曳火: 副煙 (isAirburstSecondarySmoke) - 20パーツ円錐形
+            // ========================================================
+            var secParticles = [];
+            // 進行方向単位ベクトル u (標準は斜め下向き)
+            var u = { x: 0.0, y: -0.8, z: 0.2 };
+            var uLen = Math.hypot(u.x, u.y, u.z) || 1.0;
+            u.x /= uLen; u.y /= uLen; u.z /= uLen;
+
+            // 法線平面ベクトル n1, n2
+            var n1 = { x: 1.0, y: 0.0, z: 0.0 };
+            var n2 = { x: 0.0, y: -u.z, z: u.y };
+
+            for (var sIdx = 0; sIdx < 20; sIdx++) {
+                var sRatio = Math.random() * 0.95 + 0.05;
+                var rInit = (1.0 - sRatio) * 1.05 * calScale;
+                var rFinal = (1.0 - sRatio) * 1.20 * calScale;
+                var hInit = sRatio * 2.535 * calScale;
+                var hFinal = sRatio * 2.925 * calScale;
+                var phiAngle = Math.random() * Math.PI * 2.0;
+                var szInit = (0.30 + Math.random() * 0.30) * calScale;
+                var szFinal = szInit * 1.25;
+                var colVal = 0.20 + Math.random() * 0.30;
+                var rNormSec = Math.min(1.0, Math.hypot(hInit, rInit) / (2.925 * calScale));
+                var secLife = 5.00 - Math.random() * 0.50;
+                var secRot = Math.random() * (Math.PI * 0.5);
+
+                var sMesh = createBillboardMesh(0x555555, 0.7);
+                effectGroup.add(sMesh);
+
+                secParticles.push({
+                    mesh: sMesh,
+                    rInit: rInit, rFinal: rFinal,
+                    hInit: hInit, hFinal: hFinal,
+                    phi: phiAngle,
+                    szInit: szInit, szFinal: szFinal,
+                    colVal: colVal,
+                    rNorm: rNormSec,
+                    lifeSpan: secLife,
+                    rotAngle: secRot
+                });
+            }
+
+            components.push({
+                type: 'airburst_secondary',
+                particles: secParticles,
+                maxDuration: 5.0,
+                update: function(t, camera) {
+                    if (t > this.maxDuration + 0.5) return;
+                    var progress = Math.min(1.0, t / this.maxDuration);
+                    var windDx = windVec.x * t;
+                    var windDz = windVec.z * t;
+                    var riseDy = riseSpeed * t;
+
+                    for (var k = 0; k < this.particles.length; k++) {
+                        var sp = this.particles[k];
+                        if (t > sp.lifeSpan) {
+                            sp.mesh.visible = false;
+                            continue;
+                        }
+                        sp.mesh.visible = true;
+
+                        var rCur = sp.rInit + (sp.rFinal - sp.rInit) * progress;
+                        var hCur = sp.hInit + (sp.hFinal - sp.hInit) * progress;
+                        var szCur = sp.szInit + (sp.szFinal - sp.szInit) * progress;
+
+                        var axisX = hCur * u.x;
+                        var axisY = hCur * u.y + riseDy;
+                        var axisZ = hCur * u.z;
+
+                        var px = axisX + rCur * (Math.cos(sp.phi) * n1.x + Math.sin(sp.phi) * n2.x) + windDx;
+                        var py = axisY + rCur * (Math.cos(sp.phi) * n1.y + Math.sin(sp.phi) * n2.y);
+                        var pz = axisZ + rCur * (Math.cos(sp.phi) * n1.z + Math.sin(sp.phi) * n2.z) + windDz;
+
+                        sp.mesh.position.set(px, py, pz);
+                        sp.mesh.scale.set(szCur, szCur, 1.0);
+                        sp.mesh.quaternion.copy(camera.quaternion);
+                        sp.mesh.rotateZ(sp.rotAngle);
+
+                        // 閃光照射
+                        var distFactor = Math.max(0.0, 1.0 - sp.rNorm) * Math.max(0.0, 1.0 - sp.rNorm);
+                        var flashFactor = (t <= 0.25) ? (1.0 - t / 0.25) * 1.5 * distFactor : 0.0;
+                        var c = Math.min(1.0, sp.colVal + flashFactor);
+                        sp.mesh.material.color.setRGB(c, c, c);
+
+                        // 透過度制御 (3.0sまで維持、0.3sまでは火球を隠さないよう薄く)
+                        var remRatio = 1.0;
+                        if (t > 3.00) {
+                            remRatio = Math.max(0.0, (sp.lifeSpan - t) / Math.max(0.05, (sp.lifeSpan - 3.00)));
+                        }
+                        var visibility = (t <= 0.30) ? 0.05 : (t <= 0.40 ? (0.05 + 0.95 * ((t - 0.30) / 0.10)) : 1.0);
+                        sp.mesh.material.opacity = 0.70 * remRatio * visibility;
+                    }
+                }
+            });
+
+            // ========================================================
+            // 2B. 曳火: 主煙 (isAirburstMainSmoke) - 20パーツ水平ドーナツ型
+            // ========================================================
+            var mainParticles = [];
+            for (var mIdx = 0; mIdx < 20; mIdx++) {
+                var mTheta = Math.random() * Math.PI * 2.0;
+                var mrInit = (1.53 + Math.random() * 0.25) * calScale;
+                var mrFinal = (1.91 + (Math.random() - 0.5) * 0.25) * calScale;
+                var mszInit = (0.50 + Math.random() * 0.30) * calScale;
+                var mszFinal = mszInit * 1.2;
+                var mcolVal = Math.random() * 0.20; // 漆黒〜深灰
+                var mrNorm = Math.min(1.0, mrInit / (2.25 * calScale));
+                var mLife = 5.00 - Math.random() * 0.50;
+                var mRot = Math.random() * (Math.PI * 0.5);
+
+                var mMesh = createBillboardMesh(0x111111, 0.8);
+                effectGroup.add(mMesh);
+
+                mainParticles.push({
+                    mesh: mMesh,
+                    theta: mTheta,
+                    rInit: mrInit, rFinal: mrFinal,
+                    szInit: mszInit, szFinal: mszFinal,
+                    colVal: mcolVal,
+                    rNorm: mrNorm,
+                    lifeSpan: mLife,
+                    rotAngle: mRot
+                });
+            }
+
+            components.push({
+                type: 'airburst_main',
+                particles: mainParticles,
+                maxDuration: 5.0,
+                update: function(t, camera) {
+                    if (t > this.maxDuration + 0.5) return;
+                    var progress = Math.min(1.0, t / this.maxDuration);
+                    var windDx = windVec.x * t;
+                    var windDz = windVec.z * t;
+                    var riseDy = riseSpeed * t;
+
+                    for (var k = 0; k < this.particles.length; k++) {
+                        var mp = this.particles[k];
+                        if (t > mp.lifeSpan) {
+                            mp.mesh.visible = false;
+                            continue;
+                        }
+                        mp.mesh.visible = true;
+
+                        var rCur = mp.rInit + (mp.rFinal - mp.rInit) * progress;
+                        var szCur = mp.szInit + (mp.szFinal - mp.szInit) * progress;
+
+                        var px = rCur * Math.cos(mp.theta) + windDx;
+                        var py = rCur * Math.sin(mp.theta) * 0.3 + riseDy; // やや偏平ドーナツ
+                        var pz = rCur * Math.sin(mp.theta) + windDz;
+
+                        mp.mesh.position.set(px, py, pz);
+                        mp.mesh.scale.set(szCur, szCur, 1.0);
+                        mp.mesh.quaternion.copy(camera.quaternion);
+                        mp.mesh.rotateZ(mp.rotAngle);
+
+                        // 閃光照射
+                        var distFactor = Math.max(0.0, 1.0 - mp.rNorm) * Math.max(0.0, 1.0 - mp.rNorm);
+                        var flashFactor = (t <= 0.25) ? (1.0 - t / 0.25) * 1.5 * distFactor : 0.0;
+                        var c = Math.min(1.0, mp.colVal + flashFactor);
+                        mp.mesh.material.color.setRGB(c, c, c);
+
+                        var remRatio = 1.0;
+                        if (t > 3.00) {
+                            remRatio = Math.max(0.0, (mp.lifeSpan - t) / Math.max(0.05, (mp.lifeSpan - 3.00)));
+                        }
+                        var visibility = (t <= 0.30) ? 0.05 : (t <= 0.40 ? (0.05 + 0.95 * ((t - 0.30) / 0.10)) : 1.0);
+                        mp.mesh.material.opacity = 0.80 * remRatio * visibility;
+                    }
+                }
+            });
+
+        } else {
+            // ========================================================
+            // 3A. 着発: 爆発土煙 (isGroundDirtSmoke) - 40パーツ放物線
+            // ========================================================
+            var dirtParticles = [];
+            for (var dIdx = 0; dIdx < 40; dIdx++) {
+                var dAngle = Math.random() * Math.PI * 2.0;
+                var vHoriz = (15.0 + Math.random() * 31.0) * calScale;
+                var vx0 = Math.sin(dAngle) * vHoriz;
+                var vz0 = Math.cos(dAngle) * vHoriz;
+                var vy0 = (25.0 + Math.random() * 53.0) * calScale;
+                var rectSize = (0.50 + Math.random() * 0.50) * calScale;
+                var colVal = Math.random() * 0.50;
+                var alphaInit = 0.80 + Math.random() * 0.20;
+                var rNormDirt = Math.min(1.0, vHoriz / (46.0 * calScale));
+                var dLife = 1.50 - Math.random() * 0.70;
+                var dRot = Math.random() * (Math.PI * 0.5);
+
+                var dMesh = createBillboardMesh(0x444444, alphaInit);
+                effectGroup.add(dMesh);
+
+                dirtParticles.push({
+                    mesh: dMesh,
+                    angle: dAngle,
+                    vx0: vx0, vy0: vy0, vz0: vz0,
+                    rectSize: rectSize,
+                    colVal: colVal,
+                    alphaInit: alphaInit,
+                    rNorm: rNormDirt,
+                    lifeSpan: dLife,
+                    rotAngle: dRot
+                });
+            }
+
+            components.push({
+                type: 'ground_dirt',
+                particles: dirtParticles,
+                maxDuration: 1.5,
+                update: function(t, camera) {
+                    if (t > this.maxDuration + 0.5) return;
+                    var kDrag = 4.5;
+                    var dragFactor = (1.0 - Math.exp(-kDrag * t)) / kDrag;
+                    var gAcc = 4.9;
+
+                    for (var k = 0; k < this.particles.length; k++) {
+                        var dp = this.particles[k];
+                        if (t > dp.lifeSpan) {
+                            dp.mesh.visible = false;
+                            continue;
+                        }
+                        dp.mesh.visible = true;
+
+                        var px = dp.vx0 * dragFactor;
+                        var py = Math.max(0.05, dp.vy0 * dragFactor - 0.5 * gAcc * t * t);
+                        var pz = dp.vz0 * dragFactor;
+
+                        var size = dp.rectSize * (1.0 + Math.min(1.0, t / 1.0));
+                        dp.mesh.position.set(px, py, pz);
+                        dp.mesh.scale.set(size, size, 1.0);
+                        dp.mesh.quaternion.copy(camera.quaternion);
+                        dp.mesh.rotateZ(dp.rotAngle);
+
+                        // 色: 爆心付近(rNorm <= 0.5)は作動時0.15s純白色
+                        var c = dp.colVal;
+                        if (dp.rNorm <= 0.50 && t <= 0.15) {
+                            var lerpFactor = (1.0 - t / 0.15);
+                            c = c * (1.0 - lerpFactor) + 1.0 * lerpFactor;
+                        }
+                        dp.mesh.material.color.setRGB(c, c * 0.9, c * 0.8);
+
+                        var remRatio = 1.0;
+                        if (t > 0.50) {
+                            remRatio = Math.max(0.0, (dp.lifeSpan - t) / Math.max(0.05, (dp.lifeSpan - 0.50)));
+                        }
+                        var visibility = (t <= 0.30) ? 0.05 : (t <= 0.40 ? (0.05 + 0.95 * ((t - 0.30) / 0.10)) : 1.0);
+                        dp.mesh.material.opacity = dp.alphaInit * remRatio * visibility;
+                    }
+                }
+            });
+
+            // ========================================================
+            // 3B. 着発: 着発主煙 (isGroundMainSmoke) - 24パーツ (0.3s遅延)
+            // ========================================================
+            var gMainParticles = [];
+            for (var gmIdx = 0; gmIdx < 24; gmIdx++) {
+                var gmAngle = Math.random() * Math.PI * 2.0;
+                var gmrInit = (1.5 + Math.random() * 4.5) * calScale;
+                var gmrFinal = gmrInit + (3.0 + Math.random() * 3.0) * calScale;
+                var gmRectSize = (0.60 + Math.random() * 0.60) * calScale;
+                var gmCol = Math.random() * 0.20;
+                var gmInitY = (0.2 + Math.random() * 3.5) * calScale;
+                var gmRiseFactor = (0.7 + Math.random() * 0.8);
+                var gmLife = 5.00 - Math.random() * 0.50;
+                var gmRot = Math.random() * (Math.PI * 0.5);
+
+                var gmMesh = createBillboardMesh(0x1a1a1a, 0.65);
+                effectGroup.add(gmMesh);
+
+                gMainParticles.push({
+                    mesh: gmMesh,
+                    angle: gmAngle,
+                    rInit: gmrInit, rFinal: gmrFinal,
+                    rectSize: gmRectSize,
+                    colVal: gmCol,
+                    initY: gmInitY,
+                    riseFactor: gmRiseFactor,
+                    lifeSpan: gmLife,
+                    rotAngle: gmRot
+                });
+            }
+
+            components.push({
+                type: 'ground_main',
+                particles: gMainParticles,
+                delay: 0.3,
+                maxDuration: 5.0,
+                update: function(t, camera) {
+                    if (t < this.delay || t > (this.delay + this.maxDuration + 0.5)) {
+                        for (var n = 0; n < this.particles.length; n++) this.particles[n].mesh.visible = false;
+                        return;
+                    }
+                    var effT = t - this.delay;
+                    var windX = windVec.x * effT;
+                    var windZ = windVec.z * effT;
+                    var windY = riseSpeed * effT;
+
+                    for (var k = 0; k < this.particles.length; k++) {
+                        var gmp = this.particles[k];
+                        if (effT > gmp.lifeSpan) {
+                            gmp.mesh.visible = false;
+                            continue;
+                        }
+                        gmp.mesh.visible = true;
+
+                        var rCurr = gmp.rInit + (gmp.rFinal - gmp.rInit) * Math.min(1.0, effT / this.maxDuration);
+                        var px = Math.cos(gmp.angle) * rCurr + windX;
+                        var py = gmp.initY + windY * gmp.riseFactor;
+                        var pz = Math.sin(gmp.angle) * rCurr + windZ;
+
+                        gmp.mesh.position.set(px, py, pz);
+                        gmp.mesh.scale.set(gmp.rectSize, gmp.rectSize, 1.0);
+                        gmp.mesh.quaternion.copy(camera.quaternion);
+                        gmp.mesh.rotateZ(gmp.rotAngle);
+
+                        gmp.mesh.material.color.setRGB(gmp.colVal, gmp.colVal, gmp.colVal);
+
+                        var remRatio = 1.0;
+                        if (effT > 3.00) {
+                            remRatio = Math.max(0.0, (gmp.lifeSpan - effT) / Math.max(0.05, (gmp.lifeSpan - 3.00)));
+                        }
+                        gmp.mesh.material.opacity = 0.65 * remRatio;
+                    }
+                }
+            });
+        }
+
+        // ========================================================
+        // 4. 地表弾足 (Debris) - 破裂高 < 30m で地表から吹き上がる白煙パーツ
+        // ========================================================
+        if (hob < 30.0) {
+            var energyRatio = Math.max(0.0, 1.0 - hob / 30.0);
+            var debrisCount = Math.round(10 + 30 * energyRatio);
+            var spreadRadius = Math.max(2.0, 20.0 * energyRatio);
+            var debrisParticles = [];
+
+            for (var debIdx = 0; debIdx < debrisCount; debIdx++) {
+                var dAng = Math.random() * Math.PI * 2.0;
+                var dDist = Math.sqrt(Math.random()) * spreadRadius;
+                var offX = Math.cos(dAng) * dDist;
+                var offZ = Math.sin(dAng) * dDist;
+                var maxUp = 2.0 * (0.25 + Math.random() * 0.75);
+                var climbSpeedRatio = 0.6 + Math.random() * 0.8;
+                var debSize = 0.50 + Math.random() * 1.00;
+                var debCol = 0.85 + Math.random() * 0.10;
+                var debLife = 2.50 - Math.random() * 0.50;
+                var debRot = Math.random() * (Math.PI * 0.5);
+
+                var debMesh = createBillboardMesh(0xdddddd, 0.50);
+                effectGroup.add(debMesh);
+
+                debrisParticles.push({
+                    mesh: debMesh,
+                    offX: offX, offZ: offZ,
+                    startY: -hob, // 地表相対高度
+                    maxUp: maxUp,
+                    climbSpeedRatio: climbSpeedRatio,
+                    baseSize: debSize,
+                    colVal: debCol,
+                    lifeSpan: debLife,
+                    rotAngle: debRot
+                });
+            }
+
+            components.push({
+                type: 'debris',
+                particles: debrisParticles,
+                maxDuration: 2.5,
+                update: function(t, camera) {
+                    if (t > this.maxDuration + 0.5) return;
+                    var scaleGrowth = 1.0 + 1.0 * Math.min(1.0, t / this.maxDuration);
+                    var windX = 0, windZ = 0;
+                    if (t <= 0.5) {
+                        var blend = (t * t) / (2.0 * 0.5);
+                        windX = windVec.x * blend;
+                        windZ = windVec.z * blend;
+                    } else {
+                        var windT = 0.25 + (t - 0.5);
+                        windX = windVec.x * windT;
+                        windZ = windVec.z * windT;
+                    }
+
+                    for (var k = 0; k < this.particles.length; k++) {
+                        var dbp = this.particles[k];
+                        if (t > dbp.lifeSpan) {
+                            dbp.mesh.visible = false;
+                            continue;
+                        }
+                        dbp.mesh.visible = true;
+
+                        var climbP = Math.min(1.0, t / (0.5 * dbp.climbSpeedRatio));
+                        var climbFactor = 1.0 - (1.0 - climbP) * (1.0 - climbP);
+
+                        var px = dbp.offX + windX;
+                        var py = dbp.startY + dbp.maxUp * climbFactor;
+                        var pz = dbp.offZ + windZ;
+
+                        var sz = scaleGrowth * dbp.baseSize;
+                        dbp.mesh.position.set(px, py, pz);
+                        dbp.mesh.scale.set(sz, sz, 1.0);
+                        dbp.mesh.quaternion.copy(camera.quaternion);
+                        dbp.mesh.rotateZ(dbp.rotAngle);
+
+                        dbp.mesh.material.color.setRGB(dbp.colVal, dbp.colVal, dbp.colVal);
+
+                        var remRatio = Math.max(0.0, (dbp.lifeSpan - t) / dbp.lifeSpan);
+                        dbp.mesh.material.opacity = 0.50 * remRatio;
+                    }
+                }
+            });
+        }
+
+        // アクティブエフェクトとして登録
+        activeEffects.push({
+            group: effectGroup,
+            components: components,
+            startTime: startTime,
+            maxDuration: 5.5,
+            scene: scene
+        });
+    }
+
+    /**
+     * 毎フレームのアニメーション更新ループ
+     * 
+     * @param {THREE.Camera} camera
+     */
+    function update(camera) {
+        if (!camera) return;
+        var now = performance.now();
+
+        for (var i = activeEffects.length - 1; i >= 0; i--) {
+            var effect = activeEffects[i];
+            var elapsed = (now - effect.startTime) / 1000.0;
+
+            if (elapsed > effect.maxDuration) {
+                // シーンからクリーンアップ・破棄
+                if (effect.scene && effect.group) {
+                    effect.scene.remove(effect.group);
+                    effect.group.traverse(function(obj) {
+                        if (obj.geometry && obj.geometry !== sharedQuadGeometry) obj.geometry.dispose();
+                        if (obj.material) obj.material.dispose();
+                    });
+                }
+                activeEffects.splice(i, 1);
+                continue;
+            }
+
+            for (var c = 0; c < effect.components.length; c++) {
+                effect.components[c].update(elapsed, camera);
+            }
+        }
+    }
+
+    // グローバル公開
+    window.FTXAR_EFFECTS = {
+        triggerImpact: triggerImpact,
+        update: update,
+        updateEffects: function(ts, camera) {
+            update(camera);
+        }
+    };
+
+})(window);
+</script>
+
+    <script>
+/**
+ * FTXAR - Spatial Audio Engine (audio.html)
+ * Version: 2610082015
+ * 
+ * kansokun準拠 Web Audio API 空間音響
+ * - 340m/s 音速伝播遅延
+ * - 地形遮蔽 (Non-LOS) による低音回折ローパスフィルタ (280Hz)
+ * - 距離減衰 (Inverse Square Law)
+ * - プロシージャル爆発音合成 (外部音声ファイル不要・完全自立)
+ */
+
+(function(window) {
+    'use strict';
+
+    let audioCtx = null;
+    let masterGain = null;
+    let isUnlocked = false;
+
+    /**
+     * Web Audio Context の初期化・ロック解除 (ユーザー操作イベントで発火)
+     */
+    function initAudio() {
+        if (audioCtx) {
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            return;
+        }
+
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+
+        audioCtx = new AudioContextClass();
+        masterGain = audioCtx.createGain();
+        masterGain.gain.setValueAtTime(0.7, audioCtx.currentTime);
+        masterGain.connect(audioCtx.destination);
+        isUnlocked = true;
+        console.info("FTXAR Audio: Context initialized & unlocked.");
+    }
+
+    /**
+     * ノイズバッファの生成 (爆発の砂嵐・轟音用)
+     */
+    let noiseBuffer = null;
+    function getNoiseBuffer() {
+        if (!noiseBuffer && audioCtx) {
+            const bufSize = audioCtx.sampleRate * 2.5; // 2.5秒ノイズ
+            noiseBuffer = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+            const data = noiseBuffer.getChannelData(0);
+            for (let i = 0; i < bufSize; i++) {
+                data[i] = Math.random() * 2.0 - 1.0;
+            }
+        }
+        return noiseBuffer;
+    }
+
+    /**
+     * 弾着爆発音のスケジューリング再生
+     * 
+     * @param {Object} eyePos 観測者座標 {x, y, z}
+     * @param {Object} impactPos 着弾座標 {x, y, z}
+     * @param {boolean} isLOS 直達見通しフラグ (true: 見通し良好, false: 地形遮蔽あり)
+     * @param {number} scheduledImpactTime 絶対着弾時刻 (UNIX ms)
+     */
+    function scheduleImpactSound(eyePos, impactPos, isLOS, scheduledImpactTime) {
+        if (!audioCtx) initAudio();
+        if (!audioCtx) return;
+
+        // 3次元直線距離 (m)
+        const dx = impactPos.x - eyePos.x;
+        const dy = impactPos.y - eyePos.y;
+        const dz = impactPos.z - eyePos.z;
+        const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+        // 音速 (340 m/s) による物理遅延 (秒)
+        const soundDelaySec = distance / 340.0;
+
+        // 現在の絶対時刻 (NTP補正済み) から再生発火時刻を計算
+        const nowMs = Date.now();
+        const arrivalTimeMs = scheduledImpactTime + (soundDelaySec * 1000.0);
+        const waitMs = Math.max(0, arrivalTimeMs - nowMs);
+
+        setTimeout(function() {
+            playExplosionSynthesized(distance, isLOS);
+        }, waitMs);
+    }
+
+    /**
+     * 合成爆発音の再生
+     * 
+     * @param {number} distance 距離 (m)
+     * @param {boolean} isLOS 直達見通し有無
+     */
+    function playExplosionSynthesized(distance, isLOS) {
+        if (!audioCtx || audioCtx.state === 'suspended') return;
+
+        const t0 = audioCtx.currentTime;
+
+        // 距離による音量減衰 (10m基準の逆二乗則近似)
+        // 200m: 約0.35, 1000m: 約0.12, 3000m: 約0.04
+        const distGainVal = Math.max(0.02, Math.min(1.0, 35.0 / Math.max(10.0, distance)));
+
+        // 遮蔽されている場合はさらに音圧が約50%低下
+        const finalGainVal = isLOS ? distGainVal : (distGainVal * 0.45);
+
+        // 1. 低周波爆風オシレータ (サブベース衝撃波)
+        const osc = audioCtx.createOscillator();
+        const oscGain = audioCtx.createGain();
+
+        // 155mm榴弾の重低音ピッチエンベロープ (130Hz -> 30Hz)
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(130.0, t0);
+        osc.frequency.exponentialRampToValueAtTime(32.0, t0 + 0.45);
+
+        oscGain.gain.setValueAtTime(0.001, t0);
+        oscGain.gain.linearRampToValueAtTime(finalGainVal * 1.2, t0 + 0.02);
+        oscGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.2);
+
+        osc.connect(oscGain);
+
+        // 2. 轟音・破裂ノイズソース
+        const noiseBuf = getNoiseBuffer();
+        let noiseSource = null;
+        const noiseGain = audioCtx.createGain();
+
+        if (noiseBuf) {
+            noiseSource = audioCtx.createBufferSource();
+            noiseSource.buffer = noiseBuf;
+
+            noiseGain.gain.setValueAtTime(0.001, t0);
+            noiseGain.gain.linearRampToValueAtTime(finalGainVal * 0.9, t0 + 0.015);
+            noiseGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.8);
+        }
+
+        // 3. 【核心】地形遮蔽(Non-LOS)フィルター
+        // 遮蔽時は280Hzローパスで高周波の炸裂音を完全遮断、低音の地響きのみが山を回折する
+        const filter = audioCtx.createBiquadFilter();
+        if (isLOS) {
+            // 見通し可: 高域のキレのある破裂音 (1800Hz ローパス)
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(1800, t0);
+            filter.frequency.exponentialRampToValueAtTime(400, t0 + 1.5);
+            filter.Q.value = 1.2;
+        } else {
+            // 地形遮蔽 (Non-LOS): 重低音回折音のみ (280Hz 固定ローパス)
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(280, t0);
+            filter.frequency.linearRampToValueAtTime(150, t0 + 1.5);
+            filter.Q.value = 2.0; // 低域ブースト
+        }
+
+        oscGain.connect(filter);
+        if (noiseSource) {
+            noiseSource.connect(noiseGain);
+            noiseGain.connect(filter);
+        }
+
+        filter.connect(masterGain);
+
+        osc.start(t0);
+        osc.stop(t0 + 1.3);
+
+        if (noiseSource) {
+            noiseSource.start(t0);
+            noiseSource.stop(t0 + 2.0);
+        }
+    }
+
+    // グローバル公開
+    window.FTXAR_AUDIO = {
+        initAudio: initAudio,
+        resumeAudio: initAudio,
+        scheduleImpactSound: scheduleImpactSound,
+        playExplosionSynthesized: playExplosionSynthesized
+    };
+
+})(window);
+</script>
+
+    <script>
+/**
+ * FTXAR - Device Attitude & Compass Calibration (calibration.html)
+ * Version: 2610082045
+ * 
+ * - DeviceOrientation 四元数姿勢推定 (iOS / Android / 横持ち対応)
+ * - 太陽、月、北極星、著明な山によるワンタップ電子コンパス校正
+ */
+
+(function(window) {
+    'use strict';
+
+    var DEG2RAD = Math.PI / 180.0;
+    var RAD2DEG = 180.0 / Math.PI;
+
+    var attitudeState = {
+        isActive: false,
+        rawQuat: null,
+        currentQuat: null,
+        lastQuat: null,
+        arYawOffset: parseFloat(localStorage.getItem('ftxar_yaw_offset') || '0'), // ラジアン
+        lastOrientation: (window.screen && window.screen.orientation) ? window.screen.orientation.angle : (window.orientation || 0),
+        currentAzimuthMil: 0,
+        currentPitchMil: 0
+    };
+
+    /**
+     * センサー起動とリスナー登録
+     */
+    function startSensors() {
+        if (attitudeState.isActive) return;
+
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+            DeviceOrientationEvent.requestPermission()
+                .then(function(state) {
+                    if (state === 'granted') {
+                        attachListeners();
+                    } else {
+                        console.warn('センサーへのアクセスが拒否されました。');
+                    }
+                })
+                .catch(function(err) {
+                    console.warn("Sensor permission catch:", err);
+                });
+        } else {
+            attachListeners();
+        }
+    }
+
+    function attachListeners() {
+        attitudeState.isActive = true;
+        window.addEventListener('deviceorientation', onDeviceOrientation, true);
+        window.addEventListener('orientationchange', function() {
+            attitudeState.lastOrientation = (window.screen && window.screen.orientation) ? window.screen.orientation.angle : (window.orientation || 0);
+            attitudeState.lastQuat = null;
+        });
+        console.info("FTXAR Calibration: Sensors active.");
+    }
+
+    function onDeviceOrientation(e) {
+        if (!attitudeState.isActive || typeof THREE === 'undefined') return;
+
+        var alpha = (e.webkitCompassHeading !== undefined) ? e.webkitCompassHeading : (360.0 - (e.alpha || 0));
+        var beta = e.beta || 0;
+        var gamma = e.gamma || 0;
+        var orient = (window.screen && window.screen.orientation) ? window.screen.orientation.angle : (window.orientation || 0);
+
+        var euler = new THREE.Euler(beta * DEG2RAD, gamma * DEG2RAD, -alpha * DEG2RAD, 'ZXY');
+        var qDevice = new THREE.Quaternion().setFromEuler(euler);
+
+        var qOrient = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -orient * DEG2RAD);
+        qDevice.multiply(qOrient);
+
+        var qBaseFix = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2.0, 0, 0, 'ZXY'));
+        var qFinal = new THREE.Quaternion().multiplyQuaternions(qBaseFix, qDevice);
+
+        if (!attitudeState.rawQuat) attitudeState.rawQuat = new THREE.Quaternion();
+        attitudeState.rawQuat.copy(qFinal);
+
+        if (!attitudeState.currentQuat) {
+            attitudeState.currentQuat = qFinal.clone();
+        } else {
+            attitudeState.currentQuat.slerp(qFinal, 0.15);
+        }
+
+        var forward = new THREE.Vector3(0, 0, -1).applyQuaternion(getCameraQuaternion());
+        var azRad = Math.atan2(forward.x, -forward.z);
+        if (azRad < 0) azRad += 2.0 * Math.PI;
+
+        attitudeState.currentAzimuthMil = Math.round(azRad * (6400.0 / (2.0 * Math.PI))) % 6400;
+        attitudeState.currentPitchMil = Math.round(Math.asin(forward.y) * (6400.0 / (2.0 * Math.PI)));
+    }
+
+    /**
+     * カメラに適用する最終クォータニオン (ヨー角オフセット合成済み)
+     */
+    function getCameraQuaternion() {
+        if (typeof THREE === 'undefined') return null;
+        if (!attitudeState.currentQuat) return new THREE.Quaternion();
+        var q = attitudeState.currentQuat.clone();
+        if (attitudeState.arYawOffset !== 0) {
+            var qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), attitudeState.arYawOffset);
+            q.premultiply(qYaw);
+        }
+        return q;
+    }
+
+    /**
+     * キャリブレーションの実行
+     */
+    function applyCalibration(targetBearingMil) {
+        if (!attitudeState.currentQuat || typeof THREE === 'undefined') return false;
+
+        var forwardRaw = new THREE.Vector3(0, 0, -1).applyQuaternion(attitudeState.currentQuat);
+        var rawAzRad = Math.atan2(forwardRaw.x, -forwardRaw.z);
+        if (rawAzRad < 0) rawAzRad += 2.0 * Math.PI;
+
+        var targetRad = targetBearingMil * (2.0 * Math.PI / 6400.0);
+        var offset = targetRad - rawAzRad;
+        offset = ((offset % (2.0 * Math.PI)) + 2.0 * Math.PI) % (2.0 * Math.PI);
+        if (offset > Math.PI) offset -= 2.0 * Math.PI;
+
+        attitudeState.arYawOffset = offset;
+        localStorage.setItem('ftxar_yaw_offset', offset.toString());
+        console.info("FTXAR Calibration: Applied Yaw Offset = " + (offset * RAD2DEG).toFixed(2) + " deg");
+        return true;
+    }
+
+    /**
+     * キャリブレーションのリセット
+     */
+    function resetCalibration() {
+        attitudeState.arYawOffset = 0;
+        localStorage.removeItem('ftxar_yaw_offset');
+    }
+
+    // グローバル公開
+    window.FTXAR_CALIBRATION = {
+        startSensors: startSensors,
+        getCameraQuaternion: getCameraQuaternion,
+        applyCalibration: applyCalibration,
+        resetCalibration: resetCalibration,
+        getState: function() { return attitudeState; }
+    };
+
+})(window);
+</script>
+
+    <script>
+/**
+ * FTXAR - 10-Mil Tactical Reticle & Zoom Engine (reticle.html)
+ * Version: 2610082045
+ * 
+ * 10ミル単位のレティクル重畳描画 (ON/OFF切替可能)
+ * カメラ画角(FOV)およびズーム倍率に完全連動する光学測角グリッド
+ */
+
+(function(window) {
+    'use strict';
+
+    var reticleState = {
+        isVisible: true,
+        currentZoom: 1.0,     // 1.0x, 2.0x, 5.0x, 10.0x
+        baseFovDeg: 60.0,     // 標準カメラ垂直画角 (度)
+        canvas: null,
+        ctx: null
+    };
+
+    /**
+     * レティクル描画キャンバスの初期化
+     */
+    function initReticle(canvasElement) {
+        reticleState.canvas = canvasElement;
+        reticleState.ctx = canvasElement.getContext('2d');
+        resizeReticle();
+        window.addEventListener('resize', resizeReticle);
+        // 初期描画
+        drawReticle(reticleState.baseFovDeg);
+    }
+
+    function resizeReticle() {
+        if (!reticleState.canvas) return;
+        var w = window.innerWidth;
+        var h = window.innerHeight;
+        var dpr = window.devicePixelRatio || 1;
+        reticleState.canvas.width = w * dpr;
+        reticleState.canvas.height = h * dpr;
+        reticleState.canvas.style.width = w + 'px';
+        reticleState.canvas.style.height = h + 'px';
+        drawReticle(reticleState.baseFovDeg);
+    }
+
+    /**
+     * レティクルの描画 (毎フレーム呼出)
+     */
+    function drawReticle(cameraFovDeg) {
+        if (!reticleState.isVisible || !reticleState.ctx || !reticleState.canvas) return;
+
+        var ctx = reticleState.ctx;
+        var canvas = reticleState.canvas;
+        var dpr = window.devicePixelRatio || 1;
+        var w = canvas.width;
+        var h = canvas.height;
+        var cx = w / 2.0;
+        var cy = h / 2.0;
+
+        ctx.clearRect(0, 0, w, h);
+
+        var fovDeg = (cameraFovDeg || reticleState.baseFovDeg);
+        var fovRad = (fovDeg * Math.PI) / 180.0;
+
+        // 1ミルあたりのピクセル幅 (Angular True-Scale)
+        var milRad = (2.0 * Math.PI) / 6400.0;
+        var pxPerMil = ((h / 2.0) / Math.tan(fovRad / 2.0)) * Math.tan(milRad) * reticleState.currentZoom;
+
+        ctx.save();
+        ctx.strokeStyle = '#00ff88'; // 軍用蛍光グリーン
+        ctx.fillStyle = '#00ff88';
+        ctx.font = Math.round(11 * dpr) + "px 'Roboto Mono', monospace, sans-serif";
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = 1.5 * dpr;
+
+        // 1. 中央十字微小ドット
+        ctx.beginPath();
+        ctx.arc(cx, cy, 2.5 * dpr, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 2. 水平軸の10ミル目盛線描画 (±250ミルまで)
+        var maxMil = 250;
+        for (var m = -maxMil; m <= maxMil; m += 10) {
+            if (m === 0) continue;
+            var x = cx + (m * pxPerMil);
+            if (x < 0 || x > w) continue;
+
+            var tickLen = 6 * dpr;   // 10ミル小目盛
+            var is50 = (m % 50 === 0);
+            var is100 = (m % 100 === 0);
+
+            if (is100) {
+                tickLen = 16 * dpr;  // 100ミル大目盛
+            } else if (is50) {
+                tickLen = 11 * dpr;  // 50ミル中目盛
+            }
+
+            ctx.beginPath();
+            ctx.moveTo(x, cy - tickLen);
+            ctx.lineTo(x, cy + tickLen);
+            ctx.stroke();
+
+            // 100ミルごとの数値ラベル
+            if (is100) {
+                var label = Math.abs(m).toString();
+                ctx.fillText(label, x, cy + tickLen + 12 * dpr);
+            }
+        }
+
+        // 3. 垂直軸の10ミル目盛線描画 (±250ミルまで)
+        for (var m2 = -maxMil; m2 <= maxMil; m2 += 10) {
+            if (m2 === 0) continue;
+            var y = cy - (m2 * pxPerMil);
+            if (y < 0 || y > h) continue;
+
+            var tickLen2 = 6 * dpr;
+            var is50_2 = (m2 % 50 === 0);
+            var is100_2 = (m2 % 100 === 0);
+
+            if (is100_2) {
+                tickLen2 = 16 * dpr;
+            } else if (is50_2) {
+                tickLen2 = 11 * dpr;
+            }
+
+            ctx.beginPath();
+            ctx.moveTo(cx - tickLen2, y);
+            ctx.lineTo(cx + tickLen2, y);
+            ctx.stroke();
+
+            // 100ミルごとの数値ラベル
+            if (is100_2) {
+                var label2 = Math.abs(m2).toString();
+                ctx.textAlign = 'left';
+                ctx.fillText(label2, cx + tickLen2 + 5 * dpr, y);
+            }
+        }
+
+        // 4. 右上に現在のズーム倍率と目盛単位の表示
+        ctx.textAlign = 'right';
+        ctx.fillText("RETICLE: 10 MIL / TICK  [" + reticleState.currentZoom.toFixed(1) + "x]", w - 20 * dpr, 45 * dpr);
+
+        ctx.restore();
+    }
+
+    /**
+     * レティクル表示トグル
+     */
+    function toggleReticle() {
+        reticleState.isVisible = !reticleState.isVisible;
+        if (!reticleState.isVisible && reticleState.ctx && reticleState.canvas) {
+            reticleState.ctx.clearRect(0, 0, reticleState.canvas.width, reticleState.canvas.height);
+        } else {
+            drawReticle(reticleState.baseFovDeg);
+        }
+        return reticleState.isVisible;
+    }
+
+    /**
+     * ズーム倍率の変更 (1x, 2x, 5x, 10x等)
+     */
+    function setZoom(zoomLevel) {
+        reticleState.currentZoom = Math.max(1.0, Math.min(10.0, zoomLevel));
+        drawReticle(reticleState.baseFovDeg);
+        return reticleState.currentZoom;
+    }
+
+    // グローバル公開
+    window.FTXAR_RETICLE = {
+        initReticle: initReticle,
+        drawReticle: drawReticle,
+        toggleReticle: toggleReticle,
+        setZoom: setZoom,
+        getState: function() { return reticleState; }
+    };
+
+})(window);
+</script>
+
+
+    <!-- FTXAR メインスクリプト -->
+    <script>
+    (function(window) {
+        'use strict';
+
+        var APP_VERSION = '<?= version ?>';
+
+        // アプリケーション全体状態
+        var appState = {
+            userLocation: {
+                lat: 35.3300,        // 東富士演習場近傍
+                lng: 138.8300,
+                alt: 650.0,
+                demAlt: 650.0,
+                isGpsFixed: false
+            },
+            ntpOffset: 0,
+            activeMissions: [],
+            scheduledImpactsQueue: [],
+            scene: null,
+            camera: null,
+            renderer: null,
+            videoElement: null,
+            baseFovDeg: 60.0,
+            currentZoom: 1.0,
+            lastWeatherUpdate: 0,
+            currentWeather: null,
+            lastSalvoIndexMap: {},
+            hasCameraStream: false
+        };
+
+        // ========================================================
+        // UI & モーダル統制コントローラー (最上部で安全に定義)
+        // ========================================================
+        window.FTXAR_UI = {
+            openModal: function(modalId) {
+                this.closeModals();
+                var m = document.getElementById(modalId);
+                if (m) m.style.display = 'flex';
+
+                if (modalId === 'modal-mission-list') {
+                    this.renderMissionList();
+                } else if (modalId === 'modal-calibration') {
+                    this.updateCalibrationInfo();
+                }
+            },
+            closeModals: function() {
+                var modals = document.querySelectorAll('.ftx-modal');
+                for (var i = 0; i < modals.length; i++) {
+                    modals[i].style.display = 'none';
+                }
+            },
+            toggleReticle: function() {
+                if (window.FTXAR_RETICLE) {
+                    var active = window.FTXAR_RETICLE.toggleReticle();
+                    var btn = document.getElementById('btn-toggle-reticle');
+                    if (btn) btn.classList.toggle('active', active);
+                }
+            },
+            setZoomLevel: function(level) {
+                appState.currentZoom = level;
+                if (appState.camera) {
+                    appState.camera.fov = appState.baseFovDeg / level;
+                    appState.camera.updateProjectionMatrix();
+                }
+                if (window.FTXAR_RETICLE) {
+                    window.FTXAR_RETICLE.setZoom(level);
+                }
+                var btns = document.querySelectorAll('.zoom-btn');
+                for (var i = 0; i < btns.length; i++) {
+                    btns[i].classList.remove('active');
+                }
+                var curBtn = document.getElementById('zoom-btn-' + Math.round(level));
+                if (curBtn) curBtn.classList.add('active');
+            },
+            onFuseChange: function() {
+                var fuse = document.getElementById('fm-input-fuse').value;
+                var row = document.getElementById('row-burst-height');
+                if (row) {
+                    row.style.display = (fuse === 'Q') ? 'none' : 'flex';
+                }
+            },
+            resetToDefaultForm: function() {
+                document.getElementById('fm-input-title').value = "第1射撃任務 (155mm 各個効力射)";
+                document.getElementById('fm-input-bearing').value = "0";
+                document.getElementById('fm-input-distance').value = "200";
+                document.getElementById('fm-input-ammo').value = "155HE";
+                document.getElementById('fm-input-fuse').value = "CVT";
+                document.getElementById('fm-input-burst-height').value = "7.0";
+                document.getElementById('fm-input-burst-jitter').value = "2.0";
+                document.getElementById('fm-input-guns').value = "5";
+                document.getElementById('fm-input-sheaf').value = "45.0";
+                document.getElementById('fm-input-axis').value = "800";
+                document.getElementById('fm-input-angle').value = "800";
+                document.getElementById('fm-input-per').value = "25.0";
+                document.getElementById('fm-input-ped').value = "3.0";
+                document.getElementById('fm-input-interval').value = "12.0";
+                document.getElementById('fm-input-interval-jitter').value = "3.0";
+                document.getElementById('fm-input-rounds').value = "-1";
+                this.onFuseChange();
+            },
+            submitFireMission: function() {
+                var loc = appState.userLocation;
+                var bearing = parseFloat(document.getElementById('fm-input-bearing').value) || 0;
+                var distance = parseFloat(document.getElementById('fm-input-distance').value) || 200;
+
+                var targetPos = window.FTXAR_MGRS 
+                    ? window.FTXAR_MGRS.destinationPoint(loc.lat, loc.lng, distance, bearing)
+                    : { lat: loc.lat + 0.0018, lng: loc.lng };
+
+                var now = Date.now();
+                var newMission = {
+                    id: 'FM-' + now.toString(36).toUpperCase(),
+                    title: document.getElementById('fm-input-title').value || "新規射撃任務",
+                    status: 'ACTIVE',
+                    fireMethod: 'INDIVIDUAL',
+                    target: {
+                        lat: targetPos.lat,
+                        lng: targetPos.lng,
+                        alt: loc.demAlt,
+                        mgrs: window.FTXAR_MGRS ? window.FTXAR_MGRS.formatMGRS(targetPos.lat, targetPos.lng, loc.demAlt) : ''
+                    },
+                    ammo: document.getElementById('fm-input-ammo').value,
+                    fuse: document.getElementById('fm-input-fuse').value,
+                    burstHeight: parseFloat(document.getElementById('fm-input-burst-height').value) || 7.0,
+                    burstHeightJitter: parseFloat(document.getElementById('fm-input-burst-jitter').value) || 2.0,
+                    gunCount: parseInt(document.getElementById('fm-input-guns').value, 10) || 5,
+                    sheafWidth: parseFloat(document.getElementById('fm-input-sheaf').value) || 45.0,
+                    axisAzimuthMil: parseInt(document.getElementById('fm-input-axis').value, 10) || 800,
+                    impactAngleMil: parseInt(document.getElementById('fm-input-angle').value, 10) || 800,
+                    per: parseFloat(document.getElementById('fm-input-per').value) || 25.0,
+                    ped: parseFloat(document.getElementById('fm-input-ped').value) || 3.0,
+                    intervalSec: parseFloat(document.getElementById('fm-input-interval').value) || 12.0,
+                    intervalJitterSec: parseFloat(document.getElementById('fm-input-interval-jitter').value) || 3.0,
+                    roundCount: parseInt(document.getElementById('fm-input-rounds').value, 10) || -1,
+                    scheduledFirstImpactTime: now + 5000,
+                    createdAt: now
+                };
+
+                appState.activeMissions.unshift(newMission);
+                scheduleUpcomingImpacts();
+
+                if (typeof google !== 'undefined' && google.script && google.script.run) {
+                    google.script.run.saveFireMission(newMission);
+                }
+
+                this.closeModals();
+                alert("射撃任務 [" + newMission.title + "] を発令しました。初弾着弾予定: 約5秒後 (各個射)");
+            },
+            renderMissionList: function() {
+                var container = document.getElementById('mission-list-container');
+                if (!container) return;
+
+                if (appState.activeMissions.length === 0) {
+                    container.innerHTML = '<div style="text-align: center; color: #888; padding: 20px;">進行中の射撃任務はありません。</div>';
+                    return;
+                }
+
+                var html = '';
+                for (var i = 0; i < appState.activeMissions.length; i++) {
+                    var m = appState.activeMissions[i];
+                    var isActive = (m.status === 'ACTIVE');
+                    var badgeClass = isActive ? 'active' : 'cease_fire';
+                    var badgeText = isActive ? '効力射中' : '射撃中止';
+
+                    var actionBtn = isActive 
+                        ? '<button class="btn-cease-fire" onclick="window.FTXAR_UI.toggleMissionStatus(\'' + m.id + '\', \'CEASE_FIRE\')">射撃中止</button>'
+                        : '<button class="btn-resume-fire" onclick="window.FTXAR_UI.toggleMissionStatus(\'' + m.id + '\', \'ACTIVE\')">効力射続行</button>';
+
+                    html += '<div class="mission-card">' +
+                                '<div class="mission-card-header">' +
+                                    '<span class="mission-card-title">' + m.title + '</span>' +
+                                    '<span class="mission-status-badge ' + badgeClass + '">' + badgeText + '</span>' +
+                                '</div>' +
+                                '<div style="font-size: 0.8em; color: #bbb; margin-top: 4px;">' +
+                                    '諸元: ' + m.ammo + ' / ' + m.fuse + ' (破裂高 ' + m.burstHeight + 'm) / ' + m.gunCount + '門 (各個射) / 射向束' + m.sheafWidth + 'm / 間隔' + m.intervalSec + 's' +
+                                '</div>' +
+                                '<div style="font-size: 0.75em; color: #00ff88; margin-top: 2px;">' +
+                                    '目標: ' + (m.target.mgrs || '指定座標') +
+                                '</div>' +
+                                '<div class="mission-card-actions">' +
+                                    actionBtn +
+                                '</div>' +
+                            '</div>';
+                }
+                container.innerHTML = html;
+            },
+            toggleMissionStatus: function(mid, newStatus) {
+                var target = null;
+                for (var i = 0; i < appState.activeMissions.length; i++) {
+                    if (appState.activeMissions[i].id === mid) {
+                        target = appState.activeMissions[i];
+                        break;
+                    }
+                }
+                if (target) {
+                    target.status = newStatus;
+                    if (newStatus === 'ACTIVE') {
+                        target.scheduledFirstImpactTime = Date.now() + 3000;
+                    }
+                    scheduleUpcomingImpacts();
+                    this.renderMissionList();
+
+                    if (typeof google !== 'undefined' && google.script && google.script.run) {
+                        google.script.run.updateFireMissionStatus(mid, newStatus);
+                    }
+                }
+            },
+            onCalTargetChange: function() {
+                this.updateCalibrationInfo();
+            },
+            updateCalibrationInfo: function() {
+                var sel = document.getElementById('cal-target-select').value;
+                var loc = appState.userLocation;
+                var targetBearingMil = 0;
+                var targetElevMil = 0;
+
+                var now = Date.now();
+                if (sel === 'sun' && window.FTXAR_ASTRO) {
+                    var pos = window.FTXAR_ASTRO.getSunPosition(loc.lat, loc.lng, now);
+                    targetBearingMil = pos.azMil;
+                    targetElevMil = Math.round(pos.altDeg * (6400.0 / 360.0));
+                } else if (sel === 'moon' && window.FTXAR_ASTRO) {
+                    var posM = window.FTXAR_ASTRO.getMoonPosition(loc.lat, loc.lng, now);
+                    targetBearingMil = posM.azMil;
+                    targetElevMil = Math.round(posM.altDeg * (6400.0 / 360.0));
+                } else if (sel === 'polaris' && window.FTXAR_ASTRO) {
+                    var posP = window.FTXAR_ASTRO.getPolarisPosition(loc.lat, loc.lng, now);
+                    targetBearingMil = posP.azMil;
+                    targetElevMil = Math.round(posP.altDeg * (6400.0 / 360.0));
+                } else if (sel.indexOf('mt_') === 0 && window.FTXAR_ASTRO) {
+                    var idx = parseInt(sel.split('_')[1], 10);
+                    var mtn = window.FTXAR_ASTRO.PROMINENT_MOUNTAINS[idx];
+                    if (mtn) {
+                        var mInfo = window.FTXAR_ASTRO.getMountainTargetInfo(loc.lat, loc.lng, loc.alt, mtn);
+                        targetBearingMil = mInfo.bearingMil;
+                        targetElevMil = mInfo.elevAngleMil;
+                    }
+                }
+
+                document.getElementById('cal-ref-bearing').innerText = targetBearingMil.toString().padStart(4, '0') + ' mil';
+                document.getElementById('cal-ref-elevation').innerText = (targetElevMil >= 0 ? '+' : '') + targetElevMil + ' mil';
+
+                if (window.FTXAR_CALIBRATION) {
+                    var cs = window.FTXAR_CALIBRATION.getState();
+                    document.getElementById('cal-cur-bearing').innerText = cs.currentAzimuthMil.toString().padStart(4, '0') + ' mil';
+                    document.getElementById('cal-cur-offset').innerText = (cs.arYawOffset * (180.0 / Math.PI)).toFixed(1) + '°';
+                }
+
+                this.currentTargetBearingMil = targetBearingMil;
+            },
+            executeCalibration: function() {
+                if (window.FTXAR_CALIBRATION && typeof this.currentTargetBearingMil === 'number') {
+                    window.FTXAR_CALIBRATION.applyCalibration(this.currentTargetBearingMil);
+                    this.updateCalibrationInfo();
+                    alert("電子コンパスのキャリブレーションを完了しました。");
+                }
+            },
+            resetCompassCalibration: function() {
+                if (window.FTXAR_CALIBRATION) {
+                    window.FTXAR_CALIBRATION.resetCalibration();
+                    this.updateCalibrationInfo();
+                    alert("キャリブレーションをリセットしました。");
+                }
+            },
+            openQRModal: function() {
+                this.openModal('modal-qr');
+                var curUrl = window.location.href.split('#')[0];
+                var qrImg = document.getElementById('qr-image');
+                var qrText = document.getElementById('qr-url-text');
+                if (qrImg) {
+                    qrImg.src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(curUrl);
+                    // 画像ロードエラー時のフォールバック
+                    qrImg.onerror = function() {
+                        this.style.display = 'none';
+                    };
+                }
+                if (qrText) {
+                    qrText.value = curUrl;
+                }
+            },
+            copyShareUrl: function() {
+                var qrText = document.getElementById('qr-url-text');
+                if (qrText) {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(qrText.value).then(function() {
+                            alert("URLをクリップボードにコピーしました！");
+                        });
+                    } else {
+                        qrText.select();
+                        document.execCommand('copy');
+                        alert("URLをコピーしました！");
+                    }
+                }
+            },
+            startUserSession: function() {
+                var overlay = document.getElementById('start-overlay');
+                if (overlay) overlay.style.display = 'none';
+
+                try {
+                    requestCameraStream();
+                } catch(e) {
+                    console.warn("Camera stream error on start:", e);
+                }
+
+                try {
+                    if (window.FTXAR_AUDIO) {
+                        if (window.FTXAR_AUDIO.initAudio) window.FTXAR_AUDIO.initAudio();
+                        if (window.FTXAR_AUDIO.resumeAudio) window.FTXAR_AUDIO.resumeAudio();
+                    }
+                } catch(e) {
+                    console.warn("Audio init error on start:", e);
+                }
+
+                try {
+                    if (window.FTXAR_CALIBRATION && window.FTXAR_CALIBRATION.requestPermission) {
+                        window.FTXAR_CALIBRATION.requestPermission();
+                    }
+                } catch(e) {
+                    console.warn("Calibration permission error on start:", e);
+                }
+            },
+            openExternalWindow: function() {
+                var curUrl = window.location.href;
+                window.open(curUrl, '_blank');
+            },
+            requestCamera: function() {
+                requestCameraStream();
+            }
+        };
+
+        /**
+         * 初期化エントリーポイント
+         */
+        window.addEventListener('DOMContentLoaded', function() {
+            console.info("FTXAR Initializing [Version: " + APP_VERSION + "]...");
+
+            initThreeJS();
+            initReticle();
+            requestCameraStream();
+            initGeolocation();
+            initSensorsAndAudio();
+            syncServerTime();
+
+            setInterval(pollMissions, 3000);
+            requestAnimationFrame(renderLoop);
+        });
+
+        /**
+         * 1. カメラ映像の多段フォールバック要求 & 状態監視
+         */
+        function requestCameraStream() {
+            var video = document.getElementById('camera-video');
+            if (!video) return;
+            appState.videoElement = video;
+
+            video.setAttribute('autoplay', '');
+            video.setAttribute('muted', '');
+            video.setAttribute('playsinline', '');
+            video.setAttribute('webkit-playsinline', '');
+            video.muted = true;
+            video.playsInline = true;
+
+            // A. セキュアコンテキスト (HTTPS / localhost) 判定
+            if (!window.isSecureContext) {
+                var proto = window.location.protocol;
+                var reason = (proto === 'file:') 
+                    ? 'file:// スキーム (ローカルファイル直開き)' 
+                    : (proto === 'http:' ? 'http:// (非暗号化通信)' : proto);
+                handleCameraFailure(new Error("SECURE_CONTEXT_REQUIRED: " + reason));
+                return;
+            }
+
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                handleCameraFailure(new Error("MEDIA_DEVICES_NOT_SUPPORTED"));
+                return;
+            }
+
+            // B. 多段フォールバック制約リスト (シンプルな environment から順次試行)
+            var constraintsList = [
+                { video: { facingMode: 'environment' }, audio: false },
+                { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
+                { video: true, audio: false }
+            ];
+
+            function tryStream(index) {
+                if (index >= constraintsList.length) {
+                    handleCameraFailure(new Error("利用可能なカメラデバイスが見つかりませんでした。"));
+                    return;
+                }
+
+                navigator.mediaDevices.getUserMedia(constraintsList[index])
+                    .then(function(stream) {
+                        video.srcObject = stream;
+                        video.onloadedmetadata = function() {
+                            video.play().catch(function(e) { console.warn("Video play err:", e); });
+                        };
+                        video.play().catch(function(e) {});
+
+                        appState.hasCameraStream = true;
+                        updateCameraStatusUI(true, null);
+                        console.info("FTXAR Camera: Stream active (constraint index " + index + ")");
+                    })
+                    .catch(function(err) {
+                        console.warn("Camera constraint " + index + " failed (" + err.name + "):", err.message);
+                        if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
+                            handleCameraFailure(err);
+                        } else {
+                            tryStream(index + 1);
+                        }
+                    });
+            }
+
+            tryStream(0);
+        }
+
+        function handleCameraFailure(err) {
+            appState.hasCameraStream = false;
+            updateCameraStatusUI(false, err);
+            setupFallbackBackground();
+        }
+
+        function updateCameraStatusUI(isActive, err) {
+            var camBtn = document.getElementById('btn-start-camera');
+            var banner = document.getElementById('camera-status-banner');
+            var bannerText = document.getElementById('camera-banner-text');
+
+            if (isActive) {
+                if (camBtn) {
+                    camBtn.className = 'hud-btn active-stream';
+                    camBtn.innerText = '📷 接続中';
+                }
+                if (banner) banner.style.display = 'none';
+            } else {
+                if (camBtn) {
+                    camBtn.className = 'hud-btn stream-error';
+                    camBtn.innerText = '📷 カメラ起動';
+                }
+                if (banner && bannerText) {
+                    banner.style.display = 'block';
+                    var errMsg = err ? (err.name + ': ' + err.message) : '未接続';
+                    if (err && err.message && err.message.indexOf('SECURE_CONTEXT_REQUIRED') !== -1) {
+                        var detail = err.message.split(': ')[1] || '';
+                        bannerText.innerHTML = '【セキュリティ制限: 非HTTPS環境】<br>' +
+                            '現在のアクセス方式（' + detail + '）は、Pixel / Chrome のセキュリティ仕様によりカメラAPIが遮断されています。<br>' +
+                            'カメラ実写ARを利用するには、<b>HTTPS環境（https://...）</b> で開く必要があります。';
+                    } else if (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError')) {
+                        bannerText.innerHTML = '【カメラ権限がブロックされました】<br>' +
+                            'ブラウザまたはシステムのカメラ許可が拒否されています。<br>' +
+                            'Chromeのアドレスバー左のアイコンから『サイトの設定』を開き、<b>カメラの権限を『許可』</b> に変更してください。<br>' +
+                            '※Google Apps Script等のiframe内の場合は、独立したHTTPSタブで開いてください。';
+                    } else {
+                        bannerText.innerHTML = 'カメラの取得に失敗しました (' + errMsg + ')。<br>' +
+                            'ブラウザのカメラ許可を確認の上、再試行またはHTTPS環境で開いてください。';
+                    }
+                }
+            }
+        }
+
+        /**
+         * カメラが使えない場合のフォールバック背景 (タクティカルスカイ & グリッド)
+         */
+        function setupFallbackBackground() {
+            var body = document.body;
+            body.style.background = 'radial-gradient(ellipse at center, #11221a 0%, #050d09 70%, #000201 100%)';
+        }
+
+        /**
+         * 2. Three.js 初期化
+         */
+        function initThreeJS() {
+            var canvas = document.getElementById('ar-canvas');
+            var w = window.innerWidth;
+            var h = window.innerHeight;
+
+            var scene = new THREE.Scene();
+            var camera = new THREE.PerspectiveCamera(appState.baseFovDeg, w / h, 0.5, 30000);
+            camera.position.set(0, 0, 0);
+
+            var renderer = new THREE.WebGLRenderer({
+                canvas: canvas,
+                alpha: true,
+                antialias: true
+            });
+            renderer.setSize(w, h);
+            renderer.setPixelRatio(window.devicePixelRatio || 1);
+            renderer.setClearColor(0x000000, 0);
+            renderer.sortObjects = true;
+
+            appState.scene = scene;
+            appState.camera = camera;
+            appState.renderer = renderer;
+
+            window.addEventListener('resize', function() {
+                var nw = window.innerWidth;
+                var nh = window.innerHeight;
+                camera.aspect = nw / nh;
+                camera.updateProjectionMatrix();
+                renderer.setSize(nw, nh);
+            });
+        }
+
+        /**
+         * 3. レティクルキャンバス初期化
+         */
+        function initReticle() {
+            var reticleCanvas = document.getElementById('reticle-canvas');
+            if (window.FTXAR_RETICLE) {
+                window.FTXAR_RETICLE.initReticle(reticleCanvas);
+            }
+        }
+
+        /**
+         * 4. GNSS位置情報の取得 & 最低地上高拘束
+         */
+        function initGeolocation() {
+            if ('geolocation' in navigator) {
+                navigator.geolocation.watchPosition(
+                    async function(pos) {
+                        var lat = pos.coords.latitude;
+                        var lng = pos.coords.longitude;
+                        var gpsAlt = pos.coords.altitude || 50.0;
+
+                        appState.userLocation.lat = lat;
+                        appState.userLocation.lng = lng;
+                        appState.userLocation.isGpsFixed = true;
+
+                        if (window.FTXAR_TERRAIN) {
+                            var demAlt = await window.FTXAR_TERRAIN.getElevation(lat, lng);
+                            appState.userLocation.demAlt = demAlt;
+
+                            var eyeAlt = Math.max(gpsAlt, demAlt + 1.0);
+                            appState.userLocation.alt = eyeAlt;
+
+                            window.FTXAR_TERRAIN.buildTerrainMesh(appState.scene, lat, lng, 2000, 64);
+                        }
+
+                        updateMGRSDisplay();
+                        updateWeather(lat, lng);
+
+                        if (appState.activeMissions.length === 0) {
+                            startDefaultMission();
+                        }
+                    },
+                    function(err) {
+                        console.warn("FTXAR Geolocation warning:", err);
+                        onGpsFallback();
+                    },
+                    { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 }
+                );
+            } else {
+                onGpsFallback();
+            }
+        }
+
+        async function onGpsFallback() {
+            var loc = appState.userLocation;
+            if (window.FTXAR_TERRAIN) {
+                var demAlt = await window.FTXAR_TERRAIN.getElevation(loc.lat, loc.lng);
+                loc.demAlt = demAlt;
+                loc.alt = demAlt + 1.5;
+                window.FTXAR_TERRAIN.buildTerrainMesh(appState.scene, loc.lat, loc.lng, 2000, 64);
+            }
+            updateMGRSDisplay();
+            updateWeather(loc.lat, loc.lng);
+            if (appState.activeMissions.length === 0) {
+                startDefaultMission();
+            }
+        }
+
+        /**
+         * 5. センサーと音響のアンロック
+         */
+        function initSensorsAndAudio() {
+            var unlockHandler = function() {
+                if (window.FTXAR_AUDIO) window.FTXAR_AUDIO.initAudio();
+                if (window.FTXAR_CALIBRATION) window.FTXAR_CALIBRATION.startSensors();
+                if (!appState.hasCameraStream) requestCameraStream();
+                window.removeEventListener('click', unlockHandler);
+                window.removeEventListener('touchstart', unlockHandler);
+            };
+            window.addEventListener('click', unlockHandler);
+            window.addEventListener('touchstart', unlockHandler);
+        }
+
+        /**
+         * 6. サーバー時刻NTP同期
+         */
+        function syncServerTime() {
+            var tStart = Date.now();
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run
+                    .withSuccessHandler(function(serverTime) {
+                        var tEnd = Date.now();
+                        var rtt = tEnd - tStart;
+                        var estimatedServerNow = serverTime + (rtt / 2.0);
+                        appState.ntpOffset = tEnd - estimatedServerNow;
+                        console.info("FTXAR NTP: Synced. Offset = " + appState.ntpOffset.toFixed(1) + " ms");
+                    })
+                    .getServerTime();
+            }
+        }
+
+        /**
+         * 7. 射撃任務のサーバーポーリング
+         */
+        function pollMissions() {
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run
+                    .withSuccessHandler(function(missions) {
+                        if (missions && Array.isArray(missions)) {
+                            appState.activeMissions = missions;
+                            scheduleUpcomingImpacts();
+                        }
+                    })
+                    .getFireMissions();
+            }
+        }
+
+        /**
+         * デフォルト射撃任務の開始 (各個射・ランダム弾着)
+         */
+        function startDefaultMission() {
+            var loc = appState.userLocation;
+            if (!window.FTXAR_BALLISTICS) return;
+
+            var defMission = window.FTXAR_BALLISTICS.createDefaultFireMission(loc.lat, loc.lng, loc.demAlt, 4000);
+            appState.activeMissions = [defMission];
+            scheduleUpcomingImpacts();
+
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run.saveFireMission(defMission);
+            }
+        }
+
+        /**
+         * 各個射 (ランダム弾着) の絶対時刻事前キューイング
+         */
+        function scheduleUpcomingImpacts() {
+            if (!window.FTXAR_BALLISTICS) return;
+
+            var loc = appState.userLocation;
+            var nowSynced = Date.now() - appState.ntpOffset;
+
+            for (var m = 0; m < appState.activeMissions.length; m++) {
+                var mission = appState.activeMissions[m];
+                if (mission.status !== 'ACTIVE') continue;
+
+                var mid = mission.id;
+                var lastSalvo = appState.lastSalvoIndexMap[mid] || 0;
+
+                for (var s = lastSalvo; s <= lastSalvo + 2; s++) {
+                    if (mission.roundCount > 0 && s >= mission.roundCount) break;
+
+                    var salvoImpacts = window.FTXAR_BALLISTICS.calculateSalvoImpacts(
+                        mission, s, loc.lat, loc.lng, loc.demAlt
+                    );
+
+                    for (var k = 0; k < salvoImpacts.length; k++) {
+                        var imp = salvoImpacts[k];
+                        if (imp.impactTime > nowSynced - 1000) {
+                            var exists = false;
+                            for (var q = 0; q < appState.scheduledImpactsQueue.length; q++) {
+                                var item = appState.scheduledImpactsQueue[q];
+                                if (item.missionId === imp.missionId && 
+                                    item.salvoIndex === imp.salvoIndex && 
+                                    item.gunIndex === imp.gunIndex) {
+                                    exists = true;
+                                    break;
+                                }
+                            }
+                            if (!exists) {
+                                appState.scheduledImpactsQueue.push(imp);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /**
+         * Open-Meteo 気象データの更新
+         */
+        async function updateWeather(lat, lng) {
+            var now = Date.now();
+            if (now - appState.lastWeatherUpdate > 300000 && window.FTXAR_WEATHER) {
+                appState.lastWeatherUpdate = now;
+                var wData = await window.FTXAR_WEATHER.fetchWeather(lat, lng);
+                appState.currentWeather = wData;
+                var wElem = document.getElementById('hud-wind-info');
+                if (wElem && wData) {
+                    wElem.innerText = '風向: ' + wData.windDirectionDeg.toFixed(0) + '° ' + wData.windSpeed.toFixed(1) + 'm/s';
+                }
+            }
+        }
+
+        /**
+         * 下部 MGRS 座標表示の更新
+         */
+        function updateMGRSDisplay() {
+            var loc = appState.userLocation;
+            var elem = document.getElementById('mgrs-text');
+            if (elem && window.FTXAR_MGRS) {
+                elem.innerText = window.FTXAR_MGRS.formatMGRS(loc.lat, loc.lng, loc.alt);
+            }
+        }
+
+        /**
+         * 8. メインレンダリング & アニメーションループ (60fps)
+         */
+        function renderLoop(timestamp) {
+            requestAnimationFrame(renderLoop);
+
+            var nowSynced = Date.now() - appState.ntpOffset;
+
+            // A. カメラ姿勢同期
+            if (window.FTXAR_CALIBRATION && appState.camera) {
+                var qCam = window.FTXAR_CALIBRATION.getCameraQuaternion();
+                if (qCam) {
+                    appState.camera.quaternion.copy(qCam);
+                }
+
+                var cState = window.FTXAR_CALIBRATION.getState();
+                var azElem = document.getElementById('hud-azimuth-info');
+                var elElem = document.getElementById('hud-elevation-info');
+                if (azElem) azElem.innerText = '方位: ' + cState.currentAzimuthMil.toString().padStart(4, '0') + ' mil';
+                if (elElem) elElem.innerText = '仰角: ' + (cState.currentPitchMil >= 0 ? '+' : '') + cState.currentPitchMil.toString().padStart(4, '0') + ' mil';
+            }
+
+            // B. ★各個射・絶対着弾時刻に基づく弾着エフェクト & 空間音響の発火
+            for (var i = appState.scheduledImpactsQueue.length - 1; i >= 0; i--) {
+                var imp = appState.scheduledImpactsQueue[i];
+
+                if (!imp.isFired && nowSynced >= imp.impactTime) {
+                    imp.isFired = true;
+
+                    if (window.FTXAR_EFFECTS) {
+                        window.FTXAR_EFFECTS.triggerImpact(appState.scene, imp, appState.currentWeather);
+                    }
+
+                    var eyePos = appState.camera ? appState.camera.position : new THREE.Vector3(0, 0, 0);
+                    var isLOS = window.FTXAR_TERRAIN 
+                        ? window.FTXAR_TERRAIN.checkLineOfSight(eyePos, imp.position)
+                        : true;
+
+                    if (window.FTXAR_AUDIO) {
+                        window.FTXAR_AUDIO.scheduleImpactSound(eyePos, imp.position, isLOS, imp.impactTime);
+                    }
+
+                    appState.lastSalvoIndexMap[imp.missionId] = Math.max(
+                        appState.lastSalvoIndexMap[imp.missionId] || 0,
+                        imp.salvoIndex + 1
+                    );
+                }
+
+                if (imp.isFired && nowSynced > imp.impactTime + 15000) {
+                    appState.scheduledImpactsQueue.splice(i, 1);
+                }
+            }
+
+            scheduleUpcomingImpacts();
+
+            // C. かんそくん本体準拠 弾着パーティクル・エフェクト更新
+            if (window.FTXAR_EFFECTS) {
+                window.FTXAR_EFFECTS.update(appState.camera);
+            }
+
+            // D. Three.js シーン描画
+            if (appState.renderer && appState.scene && appState.camera) {
+                appState.renderer.render(appState.scene, appState.camera);
+            }
+
+            // E. レティクル再描画
+            if (window.FTXAR_RETICLE) {
+                window.FTXAR_RETICLE.drawReticle(appState.camera ? appState.camera.fov : appState.baseFovDeg);
+            }
+        }
+
+    })(window);
+    </script>
+</body>
+</html>

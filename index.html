@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>FTXAR - 砲兵弾着観測WebAR [v<?= version ?>]</title>
+    <!-- Three.js (CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    
+    <!-- スタイルシート埋め込み -->
+    <?!= include('style'); ?>
+</head>
+<body>
+
+    <!-- 1. 全画面カメラ実写映像 -->
+    <video id="camera-video" autoplay playsinline muted></video>
+
+    <!-- 2. Three.js WebGL キャンバス (オクルージョン地形 & 弾着エフェクト) -->
+    <canvas id="ar-canvas"></canvas>
+
+    <!-- 3. 10ミル目盛タクティカルレティクル キャンバス -->
+    <canvas id="reticle-canvas"></canvas>
+
+    <!-- 4. HUD オーバーレイ -->
+    <div id="hud-overlay">
+        <!-- 上部コントロールバー -->
+        <div class="hud-top-bar">
+            <div class="hud-brand">
+                <span>FTXAR</span>
+                <span style="font-size: 0.65em; color: #888;">v<?= version ?></span>
+            </div>
+            
+            <div class="hud-btn-group">
+                <button class="hud-btn hud-btn-primary" onclick="window.FTXAR_UI.openModal('modal-mission-create')">射撃任務</button>
+                <button class="hud-btn" onclick="window.FTXAR_UI.openModal('modal-mission-list')">任務一覧</button>
+                <button class="hud-btn" onclick="window.FTXAR_UI.openModal('modal-calibration')">校正</button>
+                <button class="hud-btn active" id="btn-toggle-reticle" onclick="window.FTXAR_UI.toggleReticle()">レティクル</button>
+                <button class="hud-btn" onclick="window.FTXAR_UI.openQRModal()">QR</button>
+                <button class="hud-btn stream-error" id="btn-start-camera" onclick="window.FTXAR_UI.requestCamera()">📷 カメラ</button>
+                <button class="hud-btn" id="btn-external-open" onclick="window.FTXAR_UI.openExternalWindow()" title="ブラウザの別タブで直接開く">外部起動</button>
+            </div>
+        </div>
+
+        <!-- カメラ警告・案内バナー -->
+        <div id="camera-status-banner">
+            <div id="camera-banner-text">カメラのアクセスを待機中...</div>
+            <div class="banner-actions">
+                <button class="banner-btn" onclick="window.FTXAR_UI.requestCamera()">📷 再試行</button>
+                <button class="banner-btn" onclick="window.FTXAR_UI.openExternalWindow()">別タブで直接開く</button>
+            </div>
+        </div>
+
+        <!-- 右側ズームコントロール (1x / 2x / 5x / 10x) -->
+        <div class="hud-right-zoom">
+            <button class="zoom-btn active" id="zoom-btn-1" onclick="window.FTXAR_UI.setZoomLevel(1.0)">1x</button>
+            <button class="zoom-btn" id="zoom-btn-2" onclick="window.FTXAR_UI.setZoomLevel(2.0)">2x</button>
+            <button class="zoom-btn" id="zoom-btn-5" onclick="window.FTXAR_UI.setZoomLevel(5.0)">5x</button>
+            <button class="zoom-btn" id="zoom-btn-10" onclick="window.FTXAR_UI.setZoomLevel(10.0)">10x</button>
+        </div>
+
+        <!-- 下部ステータスバー (MGRS座標表示) -->
+        <div class="hud-bottom-bar">
+            <div class="mgrs-display" id="mgrs-text">
+                54S UE 00,000 - 00,000 H----
+            </div>
+            <div class="hud-sub-info">
+                <span id="hud-azimuth-info">方位: 0000 mil</span>
+                <span id="hud-elevation-info">仰角: +000 mil</span>
+                <span id="hud-wind-info">風向: --° --m/s</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 初回タップ開始オーバーレイ (iOS/Chrome ユーザー操作許可トリガー) -->
+    <div id="start-overlay" onclick="window.FTXAR_UI.startUserSession()">
+        <div class="start-box">
+            <h2>FTXAR 砲兵弾着AR</h2>
+            <p>画面をタップしてカメラ映像、電子コンパス、および戦場音響を開始します。</p>
+            <div class="tap-btn">タップして開始</div>
+        </div>
+    </div>
+
+    <!-- モーダルダイアログ埋め込み -->
+    <?!= include('mission_manager'); ?>
+
+    <!-- モジュールスクリプト群の埋め込み -->
+    <?!= include('mgrs'); ?>
+    <?!= include('astro'); ?>
+    <?!= include('weather'); ?>
+    <?!= include('terrain_occlusion'); ?>
+    <?!= include('ballistics'); ?>
+    <?!= include('effects'); ?>
+    <?!= include('audio'); ?>
+    <?!= include('calibration'); ?>
+    <?!= include('reticle'); ?>
+
+    <!-- FTXAR メインスクリプト -->
+    <script>
+    (function(window) {
+        'use strict';
+
+        var APP_VERSION = '<?= version ?>';
+
+        // アプリケーション全体状態
+        var appState = {
+            userLocation: {
+                lat: 35.3300,        // 東富士演習場近傍
+                lng: 138.8300,
+                alt: 650.0,
+                demAlt: 650.0,
+                isGpsFixed: false
+            },
+            ntpOffset: 0,
+            activeMissions: [],
+            scheduledImpactsQueue: [],
+            scene: null,
+            camera: null,
+            renderer: null,
+            videoElement: null,
+            baseFovDeg: 60.0,
+            currentZoom: 1.0,
+            lastWeatherUpdate: 0,
+            currentWeather: null,
+            lastSalvoIndexMap: {},
+            hasCameraStream: false
+        };
+
+        // ========================================================
+        // UI & モーダル統制コントローラー (最上部で安全に定義)
+        // ========================================================
+        window.FTXAR_UI = {
+            openModal: function(modalId) {
+                this.closeModals();
+                var m = document.getElementById(modalId);
+                if (m) m.style.display = 'flex';
+
+                if (modalId === 'modal-mission-list') {
+                    this.renderMissionList();
+                } else if (modalId === 'modal-calibration') {
+                    this.updateCalibrationInfo();
+                }
+            },
+            closeModals: function() {
+                var modals = document.querySelectorAll('.ftx-modal');
+                for (var i = 0; i < modals.length; i++) {
+                    modals[i].style.display = 'none';
+                }
+            },
+            toggleReticle: function() {
+                if (window.FTXAR_RETICLE) {
+                    var active = window.FTXAR_RETICLE.toggleReticle();
+                    var btn = document.getElementById('btn-toggle-reticle');
+                    if (btn) btn.classList.toggle('active', active);
+                }
+            },
+            setZoomLevel: function(level) {
+                appState.currentZoom = level;
+                if (appState.camera) {
+                    appState.camera.fov = appState.baseFovDeg / level;
+                    appState.camera.updateProjectionMatrix();
+                }
+                if (window.FTXAR_RETICLE) {
+                    window.FTXAR_RETICLE.setZoom(level);
+                }
+                var btns = document.querySelectorAll('.zoom-btn');
+                for (var i = 0; i < btns.length; i++) {
+                    btns[i].classList.remove('active');
+                }
+                var curBtn = document.getElementById('zoom-btn-' + Math.round(level));
+                if (curBtn) curBtn.classList.add('active');
+            },
+            onFuseChange: function() {
+                var fuse = document.getElementById('fm-input-fuse').value;
+                var row = document.getElementById('row-burst-height');
+                if (row) {
+                    row.style.display = (fuse === 'Q') ? 'none' : 'flex';
+                }
+            },
+            resetToDefaultForm: function() {
+                document.getElementById('fm-input-title').value = "第1射撃任務 (155mm 各個効力射)";
+                document.getElementById('fm-input-bearing').value = "0";
+                document.getElementById('fm-input-distance').value = "200";
+                document.getElementById('fm-input-ammo').value = "155HE";
+                document.getElementById('fm-input-fuse').value = "CVT";
+                document.getElementById('fm-input-burst-height').value = "7.0";
+                document.getElementById('fm-input-burst-jitter').value = "2.0";
+                document.getElementById('fm-input-guns').value = "5";
+                document.getElementById('fm-input-sheaf').value = "45.0";
+                document.getElementById('fm-input-axis').value = "800";
+                document.getElementById('fm-input-angle').value = "800";
+                document.getElementById('fm-input-per').value = "25.0";
+                document.getElementById('fm-input-ped').value = "3.0";
+                document.getElementById('fm-input-interval').value = "12.0";
+                document.getElementById('fm-input-interval-jitter').value = "3.0";
+                document.getElementById('fm-input-rounds').value = "-1";
+                this.onFuseChange();
+            },
+            submitFireMission: function() {
+                var loc = appState.userLocation;
+                var bearing = parseFloat(document.getElementById('fm-input-bearing').value) || 0;
+                var distance = parseFloat(document.getElementById('fm-input-distance').value) || 200;
+
+                var targetPos = window.FTXAR_MGRS 
+                    ? window.FTXAR_MGRS.destinationPoint(loc.lat, loc.lng, distance, bearing)
+                    : { lat: loc.lat + 0.0018, lng: loc.lng };
+
+                var now = Date.now();
+                var newMission = {
+                    id: 'FM-' + now.toString(36).toUpperCase(),
+                    title: document.getElementById('fm-input-title').value || "新規射撃任務",
+                    status: 'ACTIVE',
+                    fireMethod: 'INDIVIDUAL',
+                    target: {
+                        lat: targetPos.lat,
+                        lng: targetPos.lng,
+                        alt: loc.demAlt,
+                        mgrs: window.FTXAR_MGRS ? window.FTXAR_MGRS.formatMGRS(targetPos.lat, targetPos.lng, loc.demAlt) : ''
+                    },
+                    ammo: document.getElementById('fm-input-ammo').value,
+                    fuse: document.getElementById('fm-input-fuse').value,
+                    burstHeight: parseFloat(document.getElementById('fm-input-burst-height').value) || 7.0,
+                    burstHeightJitter: parseFloat(document.getElementById('fm-input-burst-jitter').value) || 2.0,
+                    gunCount: parseInt(document.getElementById('fm-input-guns').value, 10) || 5,
+                    sheafWidth: parseFloat(document.getElementById('fm-input-sheaf').value) || 45.0,
+                    axisAzimuthMil: parseInt(document.getElementById('fm-input-axis').value, 10) || 800,
+                    impactAngleMil: parseInt(document.getElementById('fm-input-angle').value, 10) || 800,
+                    per: parseFloat(document.getElementById('fm-input-per').value) || 25.0,
+                    ped: parseFloat(document.getElementById('fm-input-ped').value) || 3.0,
+                    intervalSec: parseFloat(document.getElementById('fm-input-interval').value) || 12.0,
+                    intervalJitterSec: parseFloat(document.getElementById('fm-input-interval-jitter').value) || 3.0,
+                    roundCount: parseInt(document.getElementById('fm-input-rounds').value, 10) || -1,
+                    scheduledFirstImpactTime: now + 5000,
+                    createdAt: now
+                };
+
+                appState.activeMissions.unshift(newMission);
+                scheduleUpcomingImpacts();
+
+                if (typeof google !== 'undefined' && google.script && google.script.run) {
+                    google.script.run.saveFireMission(newMission);
+                }
+
+                this.closeModals();
+                alert("射撃任務 [" + newMission.title + "] を発令しました。初弾着弾予定: 約5秒後 (各個射)");
+            },
+            renderMissionList: function() {
+                var container = document.getElementById('mission-list-container');
+                if (!container) return;
+
+                if (appState.activeMissions.length === 0) {
+                    container.innerHTML = '<div style="text-align: center; color: #888; padding: 20px;">進行中の射撃任務はありません。</div>';
+                    return;
+                }
+
+                var html = '';
+                for (var i = 0; i < appState.activeMissions.length; i++) {
+                    var m = appState.activeMissions[i];
+                    var isActive = (m.status === 'ACTIVE');
+                    var badgeClass = isActive ? 'active' : 'cease_fire';
+                    var badgeText = isActive ? '効力射中' : '射撃中止';
+
+                    var actionBtn = isActive 
+                        ? '<button class="btn-cease-fire" onclick="window.FTXAR_UI.toggleMissionStatus(\'' + m.id + '\', \'CEASE_FIRE\')">射撃中止</button>'
+                        : '<button class="btn-resume-fire" onclick="window.FTXAR_UI.toggleMissionStatus(\'' + m.id + '\', \'ACTIVE\')">効力射続行</button>';
+
+                    html += '<div class="mission-card">' +
+                                '<div class="mission-card-header">' +
+                                    '<span class="mission-card-title">' + m.title + '</span>' +
+                                    '<span class="mission-status-badge ' + badgeClass + '">' + badgeText + '</span>' +
+                                '</div>' +
+                                '<div style="font-size: 0.8em; color: #bbb; margin-top: 4px;">' +
+                                    '諸元: ' + m.ammo + ' / ' + m.fuse + ' (破裂高 ' + m.burstHeight + 'm) / ' + m.gunCount + '門 (各個射) / 射向束' + m.sheafWidth + 'm / 間隔' + m.intervalSec + 's' +
+                                '</div>' +
+                                '<div style="font-size: 0.75em; color: #00ff88; margin-top: 2px;">' +
+                                    '目標: ' + (m.target.mgrs || '指定座標') +
+                                '</div>' +
+                                '<div class="mission-card-actions">' +
+                                    actionBtn +
+                                '</div>' +
+                            '</div>';
+                }
+                container.innerHTML = html;
+            },
+            toggleMissionStatus: function(mid, newStatus) {
+                var target = null;
+                for (var i = 0; i < appState.activeMissions.length; i++) {
+                    if (appState.activeMissions[i].id === mid) {
+                        target = appState.activeMissions[i];
+                        break;
+                    }
+                }
+                if (target) {
+                    target.status = newStatus;
+                    if (newStatus === 'ACTIVE') {
+                        target.scheduledFirstImpactTime = Date.now() + 3000;
+                    }
+                    scheduleUpcomingImpacts();
+                    this.renderMissionList();
+
+                    if (typeof google !== 'undefined' && google.script && google.script.run) {
+                        google.script.run.updateFireMissionStatus(mid, newStatus);
+                    }
+                }
+            },
+            onCalTargetChange: function() {
+                this.updateCalibrationInfo();
+            },
+            updateCalibrationInfo: function() {
+                var sel = document.getElementById('cal-target-select').value;
+                var loc = appState.userLocation;
+                var targetBearingMil = 0;
+                var targetElevMil = 0;
+
+                var now = Date.now();
+                if (sel === 'sun' && window.FTXAR_ASTRO) {
+                    var pos = window.FTXAR_ASTRO.getSunPosition(loc.lat, loc.lng, now);
+                    targetBearingMil = pos.azMil;
+                    targetElevMil = Math.round(pos.altDeg * (6400.0 / 360.0));
+                } else if (sel === 'moon' && window.FTXAR_ASTRO) {
+                    var posM = window.FTXAR_ASTRO.getMoonPosition(loc.lat, loc.lng, now);
+                    targetBearingMil = posM.azMil;
+                    targetElevMil = Math.round(posM.altDeg * (6400.0 / 360.0));
+                } else if (sel === 'polaris' && window.FTXAR_ASTRO) {
+                    var posP = window.FTXAR_ASTRO.getPolarisPosition(loc.lat, loc.lng, now);
+                    targetBearingMil = posP.azMil;
+                    targetElevMil = Math.round(posP.altDeg * (6400.0 / 360.0));
+                } else if (sel.indexOf('mt_') === 0 && window.FTXAR_ASTRO) {
+                    var idx = parseInt(sel.split('_')[1], 10);
+                    var mtn = window.FTXAR_ASTRO.PROMINENT_MOUNTAINS[idx];
+                    if (mtn) {
+                        var mInfo = window.FTXAR_ASTRO.getMountainTargetInfo(loc.lat, loc.lng, loc.alt, mtn);
+                        targetBearingMil = mInfo.bearingMil;
+                        targetElevMil = mInfo.elevAngleMil;
+                    }
+                }
+
+                document.getElementById('cal-ref-bearing').innerText = targetBearingMil.toString().padStart(4, '0') + ' mil';
+                document.getElementById('cal-ref-elevation').innerText = (targetElevMil >= 0 ? '+' : '') + targetElevMil + ' mil';
+
+                if (window.FTXAR_CALIBRATION) {
+                    var cs = window.FTXAR_CALIBRATION.getState();
+                    document.getElementById('cal-cur-bearing').innerText = cs.currentAzimuthMil.toString().padStart(4, '0') + ' mil';
+                    document.getElementById('cal-cur-offset').innerText = (cs.arYawOffset * (180.0 / Math.PI)).toFixed(1) + '°';
+                }
+
+                this.currentTargetBearingMil = targetBearingMil;
+            },
+            executeCalibration: function() {
+                if (window.FTXAR_CALIBRATION && typeof this.currentTargetBearingMil === 'number') {
+                    window.FTXAR_CALIBRATION.applyCalibration(this.currentTargetBearingMil);
+                    this.updateCalibrationInfo();
+                    alert("電子コンパスのキャリブレーションを完了しました。");
+                }
+            },
+            resetCompassCalibration: function() {
+                if (window.FTXAR_CALIBRATION) {
+                    window.FTXAR_CALIBRATION.resetCalibration();
+                    this.updateCalibrationInfo();
+                    alert("キャリブレーションをリセットしました。");
+                }
+            },
+            openQRModal: function() {
+                this.openModal('modal-qr');
+                var curUrl = window.location.href.split('#')[0];
+                var qrImg = document.getElementById('qr-image');
+                var qrText = document.getElementById('qr-url-text');
+                if (qrImg) {
+                    qrImg.src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(curUrl);
+                    // 画像ロードエラー時のフォールバック
+                    qrImg.onerror = function() {
+                        this.style.display = 'none';
+                    };
+                }
+                if (qrText) {
+                    qrText.value = curUrl;
+                }
+            },
+            copyShareUrl: function() {
+                var qrText = document.getElementById('qr-url-text');
+                if (qrText) {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(qrText.value).then(function() {
+                            alert("URLをクリップボードにコピーしました！");
+                        });
+                    } else {
+                        qrText.select();
+                        document.execCommand('copy');
+                        alert("URLをコピーしました！");
+                    }
+                }
+            },
+            startUserSession: function() {
+                var overlay = document.getElementById('start-overlay');
+                if (overlay) overlay.style.display = 'none';
+
+                try {
+                    requestCameraStream();
+                } catch(e) {
+                    console.warn("Camera stream error on start:", e);
+                }
+
+                try {
+                    if (window.FTXAR_AUDIO) {
+                        if (window.FTXAR_AUDIO.initAudio) window.FTXAR_AUDIO.initAudio();
+                        if (window.FTXAR_AUDIO.resumeAudio) window.FTXAR_AUDIO.resumeAudio();
+                    }
+                } catch(e) {
+                    console.warn("Audio init error on start:", e);
+                }
+
+                try {
+                    if (window.FTXAR_CALIBRATION && window.FTXAR_CALIBRATION.requestPermission) {
+                        window.FTXAR_CALIBRATION.requestPermission();
+                    }
+                } catch(e) {
+                    console.warn("Calibration permission error on start:", e);
+                }
+            },
+            openExternalWindow: function() {
+                var curUrl = window.location.href;
+                window.open(curUrl, '_blank');
+            },
+            requestCamera: function() {
+                requestCameraStream();
+            }
+        };
+
+        /**
+         * 初期化エントリーポイント
+         */
+        window.addEventListener('DOMContentLoaded', function() {
+            console.info("FTXAR Initializing [Version: " + APP_VERSION + "]...");
+
+            initThreeJS();
+            initReticle();
+            requestCameraStream();
+            initGeolocation();
+            initSensorsAndAudio();
+            syncServerTime();
+
+            setInterval(pollMissions, 3000);
+            requestAnimationFrame(renderLoop);
+        });
+
+        /**
+         * 1. カメラ映像の多段フォールバック要求 & 状態監視
+         */
+        function requestCameraStream() {
+            var video = document.getElementById('camera-video');
+            if (!video) return;
+            appState.videoElement = video;
+
+            video.setAttribute('autoplay', '');
+            video.setAttribute('muted', '');
+            video.setAttribute('playsinline', '');
+            video.setAttribute('webkit-playsinline', '');
+            video.muted = true;
+            video.playsInline = true;
+
+            // A. セキュアコンテキスト (HTTPS / localhost) 判定
+            if (!window.isSecureContext) {
+                var proto = window.location.protocol;
+                var reason = (proto === 'file:') 
+                    ? 'file:// スキーム (ローカルファイル直開き)' 
+                    : (proto === 'http:' ? 'http:// (非暗号化通信)' : proto);
+                handleCameraFailure(new Error("SECURE_CONTEXT_REQUIRED: " + reason));
+                return;
+            }
+
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                handleCameraFailure(new Error("MEDIA_DEVICES_NOT_SUPPORTED"));
+                return;
+            }
+
+            // B. 多段フォールバック制約リスト (シンプルな environment から順次試行)
+            var constraintsList = [
+                { video: { facingMode: 'environment' }, audio: false },
+                { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
+                { video: true, audio: false }
+            ];
+
+            function tryStream(index) {
+                if (index >= constraintsList.length) {
+                    handleCameraFailure(new Error("利用可能なカメラデバイスが見つかりませんでした。"));
+                    return;
+                }
+
+                navigator.mediaDevices.getUserMedia(constraintsList[index])
+                    .then(function(stream) {
+                        video.srcObject = stream;
+                        video.onloadedmetadata = function() {
+                            video.play().catch(function(e) { console.warn("Video play err:", e); });
+                        };
+                        video.play().catch(function(e) {});
+
+                        appState.hasCameraStream = true;
+                        updateCameraStatusUI(true, null);
+                        console.info("FTXAR Camera: Stream active (constraint index " + index + ")");
+                    })
+                    .catch(function(err) {
+                        console.warn("Camera constraint " + index + " failed (" + err.name + "):", err.message);
+                        if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
+                            handleCameraFailure(err);
+                        } else {
+                            tryStream(index + 1);
+                        }
+                    });
+            }
+
+            tryStream(0);
+        }
+
+        function handleCameraFailure(err) {
+            appState.hasCameraStream = false;
+            updateCameraStatusUI(false, err);
+            setupFallbackBackground();
+        }
+
+        function updateCameraStatusUI(isActive, err) {
+            var camBtn = document.getElementById('btn-start-camera');
+            var banner = document.getElementById('camera-status-banner');
+            var bannerText = document.getElementById('camera-banner-text');
+
+            if (isActive) {
+                if (camBtn) {
+                    camBtn.className = 'hud-btn active-stream';
+                    camBtn.innerText = '📷 接続中';
+                }
+                if (banner) banner.style.display = 'none';
+            } else {
+                if (camBtn) {
+                    camBtn.className = 'hud-btn stream-error';
+                    camBtn.innerText = '📷 カメラ起動';
+                }
+                if (banner && bannerText) {
+                    banner.style.display = 'block';
+                    var errMsg = err ? (err.name + ': ' + err.message) : '未接続';
+                    if (err && err.message && err.message.indexOf('SECURE_CONTEXT_REQUIRED') !== -1) {
+                        var detail = err.message.split(': ')[1] || '';
+                        bannerText.innerHTML = '【セキュリティ制限: 非HTTPS環境】<br>' +
+                            '現在のアクセス方式（' + detail + '）は、Pixel / Chrome のセキュリティ仕様によりカメラAPIが遮断されています。<br>' +
+                            'カメラ実写ARを利用するには、<b>HTTPS環境（https://...）</b> で開く必要があります。';
+                    } else if (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError')) {
+                        bannerText.innerHTML = '【カメラ権限がブロックされました】<br>' +
+                            'ブラウザまたはシステムのカメラ許可が拒否されています。<br>' +
+                            'Chromeのアドレスバー左のアイコンから『サイトの設定』を開き、<b>カメラの権限を『許可』</b> に変更してください。<br>' +
+                            '※Google Apps Script等のiframe内の場合は、独立したHTTPSタブで開いてください。';
+                    } else {
+                        bannerText.innerHTML = 'カメラの取得に失敗しました (' + errMsg + ')。<br>' +
+                            'ブラウザのカメラ許可を確認の上、再試行またはHTTPS環境で開いてください。';
+                    }
+                }
+            }
+        }
+
+        /**
+         * カメラが使えない場合のフォールバック背景 (タクティカルスカイ & グリッド)
+         */
+        function setupFallbackBackground() {
+            var body = document.body;
+            body.style.background = 'radial-gradient(ellipse at center, #11221a 0%, #050d09 70%, #000201 100%)';
+        }
+
+        /**
+         * 2. Three.js 初期化
+         */
+        function initThreeJS() {
+            var canvas = document.getElementById('ar-canvas');
+            var w = window.innerWidth;
+            var h = window.innerHeight;
+
+            var scene = new THREE.Scene();
+            var camera = new THREE.PerspectiveCamera(appState.baseFovDeg, w / h, 0.5, 30000);
+            camera.position.set(0, 0, 0);
+
+            var renderer = new THREE.WebGLRenderer({
+                canvas: canvas,
+                alpha: true,
+                antialias: true
+            });
+            renderer.setSize(w, h);
+            renderer.setPixelRatio(window.devicePixelRatio || 1);
+            renderer.setClearColor(0x000000, 0);
+            renderer.sortObjects = true;
+
+            appState.scene = scene;
+            appState.camera = camera;
+            appState.renderer = renderer;
+
+            window.addEventListener('resize', function() {
+                var nw = window.innerWidth;
+                var nh = window.innerHeight;
+                camera.aspect = nw / nh;
+                camera.updateProjectionMatrix();
+                renderer.setSize(nw, nh);
+            });
+        }
+
+        /**
+         * 3. レティクルキャンバス初期化
+         */
+        function initReticle() {
+            var reticleCanvas = document.getElementById('reticle-canvas');
+            if (window.FTXAR_RETICLE) {
+                window.FTXAR_RETICLE.initReticle(reticleCanvas);
+            }
+        }
+
+        /**
+         * 4. GNSS位置情報の取得 & 最低地上高拘束
+         */
+        function initGeolocation() {
+            if ('geolocation' in navigator) {
+                navigator.geolocation.watchPosition(
+                    async function(pos) {
+                        var lat = pos.coords.latitude;
+                        var lng = pos.coords.longitude;
+                        var gpsAlt = pos.coords.altitude || 50.0;
+
+                        appState.userLocation.lat = lat;
+                        appState.userLocation.lng = lng;
+                        appState.userLocation.isGpsFixed = true;
+
+                        if (window.FTXAR_TERRAIN) {
+                            var demAlt = await window.FTXAR_TERRAIN.getElevation(lat, lng);
+                            appState.userLocation.demAlt = demAlt;
+
+                            var eyeAlt = Math.max(gpsAlt, demAlt + 1.0);
+                            appState.userLocation.alt = eyeAlt;
+
+                            window.FTXAR_TERRAIN.buildTerrainMesh(appState.scene, lat, lng, 2000, 64);
+                        }
+
+                        updateMGRSDisplay();
+                        updateWeather(lat, lng);
+
+                        if (appState.activeMissions.length === 0) {
+                            startDefaultMission();
+                        }
+                    },
+                    function(err) {
+                        console.warn("FTXAR Geolocation warning:", err);
+                        onGpsFallback();
+                    },
+                    { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 }
+                );
+            } else {
+                onGpsFallback();
+            }
+        }
+
+        async function onGpsFallback() {
+            var loc = appState.userLocation;
+            if (window.FTXAR_TERRAIN) {
+                var demAlt = await window.FTXAR_TERRAIN.getElevation(loc.lat, loc.lng);
+                loc.demAlt = demAlt;
+                loc.alt = demAlt + 1.5;
+                window.FTXAR_TERRAIN.buildTerrainMesh(appState.scene, loc.lat, loc.lng, 2000, 64);
+            }
+            updateMGRSDisplay();
+            updateWeather(loc.lat, loc.lng);
+            if (appState.activeMissions.length === 0) {
+                startDefaultMission();
+            }
+        }
+
+        /**
+         * 5. センサーと音響のアンロック
+         */
+        function initSensorsAndAudio() {
+            var unlockHandler = function() {
+                if (window.FTXAR_AUDIO) window.FTXAR_AUDIO.initAudio();
+                if (window.FTXAR_CALIBRATION) window.FTXAR_CALIBRATION.startSensors();
+                if (!appState.hasCameraStream) requestCameraStream();
+                window.removeEventListener('click', unlockHandler);
+                window.removeEventListener('touchstart', unlockHandler);
+            };
+            window.addEventListener('click', unlockHandler);
+            window.addEventListener('touchstart', unlockHandler);
+        }
+
+        /**
+         * 6. サーバー時刻NTP同期
+         */
+        function syncServerTime() {
+            var tStart = Date.now();
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run
+                    .withSuccessHandler(function(serverTime) {
+                        var tEnd = Date.now();
+                        var rtt = tEnd - tStart;
+                        var estimatedServerNow = serverTime + (rtt / 2.0);
+                        appState.ntpOffset = tEnd - estimatedServerNow;
+                        console.info("FTXAR NTP: Synced. Offset = " + appState.ntpOffset.toFixed(1) + " ms");
+                    })
+                    .getServerTime();
+            }
+        }
+
+        /**
+         * 7. 射撃任務のサーバーポーリング
+         */
+        function pollMissions() {
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run
+                    .withSuccessHandler(function(missions) {
+                        if (missions && Array.isArray(missions)) {
+                            appState.activeMissions = missions;
+                            scheduleUpcomingImpacts();
+                        }
+                    })
+                    .getFireMissions();
+            }
+        }
+
+        /**
+         * デフォルト射撃任務の開始 (各個射・ランダム弾着)
+         */
+        function startDefaultMission() {
+            var loc = appState.userLocation;
+            if (!window.FTXAR_BALLISTICS) return;
+
+            var defMission = window.FTXAR_BALLISTICS.createDefaultFireMission(loc.lat, loc.lng, loc.demAlt, 4000);
+            appState.activeMissions = [defMission];
+            scheduleUpcomingImpacts();
+
+            if (typeof google !== 'undefined' && google.script && google.script.run) {
+                google.script.run.saveFireMission(defMission);
+            }
+        }
+
+        /**
+         * 各個射 (ランダム弾着) の絶対時刻事前キューイング
+         */
+        function scheduleUpcomingImpacts() {
+            if (!window.FTXAR_BALLISTICS) return;
+
+            var loc = appState.userLocation;
+            var nowSynced = Date.now() - appState.ntpOffset;
+
+            for (var m = 0; m < appState.activeMissions.length; m++) {
+                var mission = appState.activeMissions[m];
+                if (mission.status !== 'ACTIVE') continue;
+
+                var mid = mission.id;
+                var lastSalvo = appState.lastSalvoIndexMap[mid] || 0;
+
+                for (var s = lastSalvo; s <= lastSalvo + 2; s++) {
+                    if (mission.roundCount > 0 && s >= mission.roundCount) break;
+
+                    var salvoImpacts = window.FTXAR_BALLISTICS.calculateSalvoImpacts(
+                        mission, s, loc.lat, loc.lng, loc.demAlt
+                    );
+
+                    for (var k = 0; k < salvoImpacts.length; k++) {
+                        var imp = salvoImpacts[k];
+                        if (imp.impactTime > nowSynced - 1000) {
+                            var exists = false;
+                            for (var q = 0; q < appState.scheduledImpactsQueue.length; q++) {
+                                var item = appState.scheduledImpactsQueue[q];
+                                if (item.missionId === imp.missionId && 
+                                    item.salvoIndex === imp.salvoIndex && 
+                                    item.gunIndex === imp.gunIndex) {
+                                    exists = true;
+                                    break;
+                                }
+                            }
+                            if (!exists) {
+                                appState.scheduledImpactsQueue.push(imp);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /**
+         * Open-Meteo 気象データの更新
+         */
+        async function updateWeather(lat, lng) {
+            var now = Date.now();
+            if (now - appState.lastWeatherUpdate > 300000 && window.FTXAR_WEATHER) {
+                appState.lastWeatherUpdate = now;
+                var wData = await window.FTXAR_WEATHER.fetchWeather(lat, lng);
+                appState.currentWeather = wData;
+                var wElem = document.getElementById('hud-wind-info');
+                if (wElem && wData) {
+                    wElem.innerText = '風向: ' + wData.windDirectionDeg.toFixed(0) + '° ' + wData.windSpeed.toFixed(1) + 'm/s';
+                }
+            }
+        }
+
+        /**
+         * 下部 MGRS 座標表示の更新
+         */
+        function updateMGRSDisplay() {
+            var loc = appState.userLocation;
+            var elem = document.getElementById('mgrs-text');
+            if (elem && window.FTXAR_MGRS) {
+                elem.innerText = window.FTXAR_MGRS.formatMGRS(loc.lat, loc.lng, loc.alt);
+            }
+        }
+
+        /**
+         * 8. メインレンダリング & アニメーションループ (60fps)
+         */
+        function renderLoop(timestamp) {
+            requestAnimationFrame(renderLoop);
+
+            var nowSynced = Date.now() - appState.ntpOffset;
+
+            // A. カメラ姿勢同期
+            if (window.FTXAR_CALIBRATION && appState.camera) {
+                var qCam = window.FTXAR_CALIBRATION.getCameraQuaternion();
+                if (qCam) {
+                    appState.camera.quaternion.copy(qCam);
+                }
+
+                var cState = window.FTXAR_CALIBRATION.getState();
+                var azElem = document.getElementById('hud-azimuth-info');
+                var elElem = document.getElementById('hud-elevation-info');
+                if (azElem) azElem.innerText = '方位: ' + cState.currentAzimuthMil.toString().padStart(4, '0') + ' mil';
+                if (elElem) elElem.innerText = '仰角: ' + (cState.currentPitchMil >= 0 ? '+' : '') + cState.currentPitchMil.toString().padStart(4, '0') + ' mil';
+            }
+
+            // B. ★各個射・絶対着弾時刻に基づく弾着エフェクト & 空間音響の発火
+            for (var i = appState.scheduledImpactsQueue.length - 1; i >= 0; i--) {
+                var imp = appState.scheduledImpactsQueue[i];
+
+                if (!imp.isFired && nowSynced >= imp.impactTime) {
+                    imp.isFired = true;
+
+                    if (window.FTXAR_EFFECTS) {
+                        window.FTXAR_EFFECTS.triggerImpact(appState.scene, imp, appState.currentWeather);
+                    }
+
+                    var eyePos = appState.camera ? appState.camera.position : new THREE.Vector3(0, 0, 0);
+                    var isLOS = window.FTXAR_TERRAIN 
+                        ? window.FTXAR_TERRAIN.checkLineOfSight(eyePos, imp.position)
+                        : true;
+
+                    if (window.FTXAR_AUDIO) {
+                        window.FTXAR_AUDIO.scheduleImpactSound(eyePos, imp.position, isLOS, imp.impactTime);
+                    }
+
+                    appState.lastSalvoIndexMap[imp.missionId] = Math.max(
+                        appState.lastSalvoIndexMap[imp.missionId] || 0,
+                        imp.salvoIndex + 1
+                    );
+                }
+
+                if (imp.isFired && nowSynced > imp.impactTime + 15000) {
+                    appState.scheduledImpactsQueue.splice(i, 1);
+                }
+            }
+
+            scheduleUpcomingImpacts();
+
+            // C. かんそくん本体準拠 弾着パーティクル・エフェクト更新
+            if (window.FTXAR_EFFECTS) {
+                window.FTXAR_EFFECTS.update(appState.camera);
+            }
+
+            // D. Three.js シーン描画
+            if (appState.renderer && appState.scene && appState.camera) {
+                appState.renderer.render(appState.scene, appState.camera);
+            }
+
+            // E. レティクル再描画
+            if (window.FTXAR_RETICLE) {
+                window.FTXAR_RETICLE.drawReticle(appState.camera ? appState.camera.fov : appState.baseFovDeg);
+            }
+        }
+
+    })(window);
+    </script>
+</body>
+</html>

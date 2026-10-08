@@ -1,0 +1,162 @@
+<script>
+/**
+ * FTXAR - Ballistics & Fire Mission Scheduler (ballistics.html)
+ * Version: 2610082045
+ * 
+ * 射撃任務諸元計算、公算誤差(PER/PED)付与、射向束展開、
+ * および「各個射 (ランダム弾着)」の絶対時刻タイムテーブル生成
+ */
+
+(function(window) {
+    'use strict';
+
+    /**
+     * 標準正規分布乱数 (ボックス＝ミュラー法)
+     */
+    function randomGaussian() {
+        var u = 0, v = 0;
+        while (u === 0) u = Math.random();
+        while (v === 0) v = Math.random();
+        return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+    }
+
+    /**
+     * デフォルト射撃任務の生成
+     * 要件: 自己位置から北に200m、155mm HE、曳火(CVT破裂高7m±2m)、
+     * 射向束45m、5門、弾着角800ミル、長軸800ミル、PER25m、PED3m、
+     * 発射間隔12秒±3秒、弾数無制限
+     * 射撃方法: 各個射 (ランダム弾着)
+     */
+    function createDefaultFireMission(userLat, userLng, userAlt, startDelayMs) {
+        if (startDelayMs === undefined) startDelayMs = 4000;
+
+        var targetPos = window.FTXAR_MGRS 
+            ? window.FTXAR_MGRS.destinationPoint(userLat, userLng, 200, 0)
+            : { lat: userLat + 0.0018, lng: userLng };
+
+        var targetAlt = userAlt || 50.0;
+        var now = Date.now();
+
+        return {
+            id: 'FM-' + now.toString(36).toUpperCase(),
+            title: '第1射撃任務 (155mm 各個効力射)',
+            status: 'ACTIVE',         // ACTIVE | CEASE_FIRE | COMPLETED
+            fireMethod: 'INDIVIDUAL', // INDIVIDUAL (各個射・ランダム弾着) | SALVO (斉射)
+            target: {
+                lat: targetPos.lat,
+                lng: targetPos.lng,
+                alt: targetAlt,
+                mgrs: window.FTXAR_MGRS ? window.FTXAR_MGRS.formatMGRS(targetPos.lat, targetPos.lng, targetAlt) : ''
+            },
+            ammo: '155HE',            // 155mm 榴弾
+            fuse: 'CVT',              // CVT (接近・曳火) | Q (瞬発) | Ti (時限)
+            burstHeight: 7.0,         // 破裂高 (m)
+            burstHeightJitter: 2.0,   // ±2m
+            gunCount: 5,              // 5門
+            sheafWidth: 45.0,         // 射向束 45m
+            axisAzimuthMil: 800,      // 長軸方位角 800ミル (約45°)
+            impactAngleMil: 800,      // 弾着角 800ミル
+            per: 25.0,                // 射距離公算誤差 25m
+            ped: 3.0,                 // 方向公算誤差 3m
+            intervalSec: 12.0,        // 発射間隔 12秒
+            intervalJitterSec: 3.0,   // ±3秒
+            roundCount: -1,           // -1: 弾数無制限 (継続射撃)
+            scheduledFirstImpactTime: now + startDelayMs, // 初弾着弾の絶対時刻 (UNIX ms)
+            createdAt: now
+        };
+    }
+
+    /**
+     * 射撃任務の指定サイクルにおける各砲門の弾着諸元(絶対時刻・座標・破裂高)を算出
+     * ★重要改修: 「各個射 (ランダム弾着)」により、同時着弾ではなく各門がランダムな時間差でバラバラに着弾する
+     */
+    function calculateSalvoImpacts(mission, cycleIndex, userLat, userLng, userAlt) {
+        var impacts = [];
+        var gunCount = mission.gunCount || 5;
+        var sheafWidth = mission.sheafWidth || 45.0;
+        var per = mission.per || 25.0;
+        var ped = mission.ped || 3.0;
+
+        var axisRad = (mission.axisAzimuthMil || 800) * (2.0 * Math.PI / 6400.0);
+        var perpRad = axisRad + (Math.PI / 2.0);
+
+        var cycleInterval = mission.intervalSec || 12.0;
+        var baseCycleTime = mission.scheduledFirstImpactTime + (cycleIndex * cycleInterval * 1000.0);
+
+        var latMPerDeg = 111132.95;
+        var lngMPerDeg = 111412.84 * Math.cos(userLat * Math.PI / 180.0);
+
+        var centerOffsetX = (mission.target.lng - userLng) * lngMPerDeg;
+        var centerOffsetZ = -(mission.target.lat - userLat) * latMPerDeg;
+        var centerOffsetY = (mission.target.alt - userAlt);
+
+        // 各個射 (ランダム弾着) の時間配分:
+        // サイクル時間 (例: 12秒) の中で、各砲門が均等かつランダムに分散して発射する
+        // 門ごとにシャッフルしたスロット時間を割り当て、さらに ±1.5秒のランダムジッターを付与
+        var slotWidth = (cycleInterval * 1000.0) / gunCount; // 例: 12000ms / 5 = 2400ms
+
+        for (var g = 0; g < gunCount; g++) {
+            // 1. 射向束による砲門配置
+            var sheafOffset = (gunCount > 1) 
+                ? ((g / (gunCount - 1)) - 0.5) * sheafWidth 
+                : 0;
+
+            var sx = Math.sin(perpRad) * sheafOffset;
+            var sz = -Math.cos(perpRad) * sheafOffset;
+
+            // 2. 公算誤差 (PER / PED)
+            var errorR = randomGaussian() * per;
+            var errorD = randomGaussian() * ped;
+
+            var rx = Math.sin(axisRad) * errorR + Math.sin(perpRad) * errorD;
+            var rz = -Math.cos(axisRad) * errorR - Math.cos(perpRad) * errorD;
+
+            var finalX = centerOffsetX + sx + rx;
+            var finalZ = centerOffsetZ + sz + rz;
+
+            // 3. 信管と破裂高
+            var finalBurstHeight = 0;
+            if (mission.fuse === 'CVT' || mission.fuse === 'Ti') {
+                var baseH = mission.burstHeight || 7.0;
+                var jitterH = (mission.burstHeightJitter || 2.0) * (Math.random() * 2.0 - 1.0);
+                finalBurstHeight = Math.max(1.0, baseH + jitterH);
+            }
+
+            var distXZ = Math.sqrt(finalX * finalX + finalZ * finalZ);
+            var drop = (distXZ * distXZ) / 12756274.0;
+            var finalY = centerOffsetY + finalBurstHeight - drop;
+
+            // 4. ★各個射ランダム着弾時刻の算出
+            // 砲門ごとに異なるスロット + ジッターで完全にバラバラに着弾させる
+            var baseGunSlotTime = g * slotWidth;
+            var gunJitterMs = (Math.random() * 2.0 - 1.0) * (slotWidth * 0.45); // スロット内のランダム揺らぎ
+            var impactTime = Math.round(baseCycleTime + baseGunSlotTime + gunJitterMs);
+
+            impacts.push({
+                missionId: mission.id,
+                salvoIndex: cycleIndex,
+                gunIndex: g,
+                impactTime: impactTime,
+                position: { x: finalX, y: finalY, z: finalZ },
+                groundY: centerOffsetY - drop,
+                burstHeight: finalBurstHeight,
+                fuse: mission.fuse,
+                ammo: mission.ammo,
+                isFired: false
+            });
+        }
+
+        // 着弾時刻順にソート
+        impacts.sort(function(a, b) { return a.impactTime - b.impactTime; });
+
+        return impacts;
+    }
+
+    // グローバル公開
+    window.FTXAR_BALLISTICS = {
+        createDefaultFireMission: createDefaultFireMission,
+        calculateSalvoImpacts: calculateSalvoImpacts
+    };
+
+})(window);
+</script>
