@@ -213,14 +213,33 @@
             // 2A. 曳火: 副煙 (isAirburstSecondarySmoke) - 20パーツ円錐形
             // ========================================================
             var secParticles = [];
-            // 進行方向単位ベクトル u (標準は斜め下向き)
-            var u = { x: 0.0, y: -0.8, z: 0.2 };
+
+            // 射撃方向 (長軸 - 1600 mil) および 弾着角 (impactAngleMil) から進行方向単位ベクトル u を算出
+            var axisMil = (impact.axisAzimuthMil !== undefined) ? impact.axisAzimuthMil : 800;
+            var firingAzimuthMil = ((axisMil - 1600) % 6400 + 6400) % 6400;
+            var firingAzRad = firingAzimuthMil * (2.0 * Math.PI / 6400.0);
+
+            var fallAngleMil = (impact.impactAngleMil !== undefined) ? impact.impactAngleMil : 800;
+            var fallAngleRad = fallAngleMil * (2.0 * Math.PI / 6400.0);
+
+            // 進行方向単位ベクトル u (飛翔方向へ進みつつ斜め下に降下)
+            var cosFall = Math.cos(fallAngleRad);
+            var sinFall = Math.sin(fallAngleRad);
+            var u = {
+                x: cosFall * Math.sin(firingAzRad),
+                y: -sinFall, // 斜め下向き
+                z: cosFall * (-Math.cos(firingAzRad))
+            };
             var uLen = Math.hypot(u.x, u.y, u.z) || 1.0;
             u.x /= uLen; u.y /= uLen; u.z /= uLen;
 
-            // 法線平面ベクトル n1, n2
-            var n1 = { x: 1.0, y: 0.0, z: 0.0 };
-            var n2 = { x: 0.0, y: -u.z, z: u.y };
+            // 法線平面ベクトル n1, n2 (u に直交する正規直交基底)
+            var uVec = new THREE.Vector3(u.x, u.y, u.z);
+            var refUp = (Math.abs(u.y) > 0.95) ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+            var n1Vec = new THREE.Vector3().crossVectors(uVec, refUp).normalize();
+            var n2Vec = new THREE.Vector3().crossVectors(uVec, n1Vec).normalize();
+            var n1 = { x: n1Vec.x, y: n1Vec.y, z: n1Vec.z };
+            var n2 = { x: n2Vec.x, y: n2Vec.y, z: n2Vec.z };
 
             for (var sIdx = 0; sIdx < 20; sIdx++) {
                 var sRatio = Math.random() * 0.95 + 0.05;

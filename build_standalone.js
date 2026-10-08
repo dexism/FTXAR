@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT_DIR = 'c:/dev/FTXAR';
-const VERSION = '2610082250';
+const VERSION = '2610082315';
 
 console.log('Building standalone WebAR HTML package for Standalone & GitHub Pages...');
 
@@ -22,8 +22,8 @@ const modules = [
 
 let indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
 
-// バージョン置換
-indexHtml = indexHtml.replace(/<\?!=?\s*version\s*\?>/g, VERSION);
+// バージョン置換 (<?= version ?> および <?!= version ?> の両方に完全対応)
+indexHtml = indexHtml.replace(/<\?[!=]?\s*version\s*\?>/g, VERSION);
 
 // GAS include 置換
 modules.forEach(m => {

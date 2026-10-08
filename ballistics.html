@@ -142,6 +142,8 @@
                 burstHeight: finalBurstHeight,
                 fuse: mission.fuse,
                 ammo: mission.ammo,
+                axisAzimuthMil: (mission.axisAzimuthMil !== undefined ? mission.axisAzimuthMil : 800),
+                impactAngleMil: (mission.impactAngleMil !== undefined ? mission.impactAngleMil : 800),
                 isFired: false
             });
         }

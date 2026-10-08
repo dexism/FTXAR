@@ -27,7 +27,7 @@
         <div class="hud-top-bar">
             <div class="hud-brand">
                 <span>FTXAR</span>
-                <span style="font-size: 0.65em; color: #888;">v<?= version ?></span>
+                <span id="hud-version-text" style="font-size: 0.65em; color: #888;">v<?= version ?></span>
             </div>
             
             <div class="hud-btn-group">
@@ -438,6 +438,9 @@
          */
         window.addEventListener('DOMContentLoaded', function() {
             console.info("FTXAR Initializing [Version: " + APP_VERSION + "]...");
+
+            var verEl = document.getElementById('hud-version-text');
+            if (verEl) verEl.innerText = 'v' + APP_VERSION;
 
             initThreeJS();
             initReticle();
