@@ -37,7 +37,6 @@
                 <button class="hud-btn active" id="btn-toggle-reticle" onclick="window.FTXAR_UI.toggleReticle()">レティクル</button>
                 <button class="hud-btn" onclick="window.FTXAR_UI.openQRModal()">QR</button>
                 <button class="hud-btn stream-error" id="btn-start-camera" onclick="window.FTXAR_UI.requestCamera()">📷 カメラ</button>
-                <button class="hud-btn" id="btn-external-open" onclick="window.FTXAR_UI.openExternalWindow()" title="ブラウザの別タブで直接開く">外部起動</button>
             </div>
         </div>
 
@@ -46,7 +45,6 @@
             <div id="camera-banner-text">カメラのアクセスを待機中...</div>
             <div class="banner-actions">
                 <button class="banner-btn" onclick="window.FTXAR_UI.requestCamera()">📷 再試行</button>
-                <button class="banner-btn" onclick="window.FTXAR_UI.openExternalWindow()">別タブで直接開く</button>
             </div>
         </div>
 
@@ -162,6 +160,20 @@
                 if (window.FTXAR_RETICLE) {
                     window.FTXAR_RETICLE.setZoom(level);
                 }
+
+                // ★ カメラ実写映像のズーム連動 (CSS Transform Scale & Hardware Zoom)
+                var videoEl = appState.videoElement || document.getElementById('camera-video');
+                if (videoEl) {
+                    videoEl.style.transform = (level === 1.0) ? 'none' : 'scale(' + level + ')';
+                }
+                if (appState.videoTrack && typeof appState.videoTrack.getCapabilities === 'function') {
+                    var caps = appState.videoTrack.getCapabilities();
+                    if (caps && caps.zoom) {
+                        var targetZoom = Math.min(Math.max(level, caps.zoom.min), caps.zoom.max);
+                        appState.videoTrack.applyConstraints({ advanced: [{ zoom: targetZoom }] }).catch(function(e) {});
+                    }
+                }
+
                 var btns = document.querySelectorAll('.zoom-btn');
                 for (var i = 0; i < btns.length; i++) {
                     btns[i].classList.remove('active');
@@ -416,10 +428,6 @@
                     console.warn("Calibration permission error on start:", e);
                 }
             },
-            openExternalWindow: function() {
-                var curUrl = window.location.href;
-                window.open(curUrl, '_blank');
-            },
             requestCamera: function() {
                 requestCameraStream();
             }
@@ -488,10 +496,20 @@
                 navigator.mediaDevices.getUserMedia(constraintsList[index])
                     .then(function(stream) {
                         video.srcObject = stream;
+                        var tracks = stream.getVideoTracks();
+                        if (tracks && tracks.length > 0) {
+                            appState.videoTrack = tracks[0];
+                        }
+
                         video.onloadedmetadata = function() {
                             video.play().catch(function(e) { console.warn("Video play err:", e); });
                         };
                         video.play().catch(function(e) {});
+
+                        // 現在のズーム状態を反映
+                        if (appState.currentZoom && appState.currentZoom !== 1.0) {
+                            video.style.transform = 'scale(' + appState.currentZoom + ')';
+                        }
 
                         appState.hasCameraStream = true;
                         updateCameraStatusUI(true, null);
@@ -866,9 +884,16 @@
                 appState.renderer.render(appState.scene, appState.camera);
             }
 
-            // E. レティクル再描画
+            // E. レティクル再描画 (水平線基準の傾きロール＆仰角ピッチ連動)
             if (window.FTXAR_RETICLE) {
-                window.FTXAR_RETICLE.drawReticle(appState.camera ? appState.camera.fov : appState.baseFovDeg);
+                var att = (window.FTXAR_CALIBRATION && window.FTXAR_CALIBRATION.getAttitudeAngles)
+                    ? window.FTXAR_CALIBRATION.getAttitudeAngles()
+                    : { pitchRad: 0, rollRad: 0 };
+                window.FTXAR_RETICLE.drawReticle(
+                    appState.camera ? appState.camera.fov : appState.baseFovDeg,
+                    att.pitchRad,
+                    att.rollRad
+                );
             }
         }
 

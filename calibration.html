@@ -106,6 +106,42 @@
     }
 
     /**
+     * カメラ姿勢から正確な方位(Azimuth)、仰角(Pitch)、および傾き(Roll)を取得
+     */
+    function getAttitudeAngles() {
+        if (typeof THREE === 'undefined') {
+            return { azimuthMil: 0, pitchMil: 0, pitchRad: 0, rollRad: 0 };
+        }
+        var q = getCameraQuaternion();
+        if (!q) {
+            return { azimuthMil: 0, pitchMil: 0, pitchRad: 0, rollRad: 0 };
+        }
+
+        var vForward = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+        var vRight = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
+        var vUp = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+
+        // 1. 方位角 (0 - 6400 mil)
+        var azRad = Math.atan2(vForward.x, -vForward.z);
+        if (azRad < 0) azRad += 2.0 * Math.PI;
+        var azMil = Math.round(azRad * (6400.0 / (2.0 * Math.PI))) % 6400;
+
+        // 2. 仰角 (Pitch)
+        var pitchRad = Math.asin(Math.max(-1, Math.min(1, vForward.y)));
+        var pitchMil = Math.round(pitchRad * (6400.0 / (2.0 * Math.PI)));
+
+        // 3. 画面の傾き (Roll) - 水平線を保つためのロール角
+        var rollRad = Math.atan2(vRight.y, vUp.y);
+
+        return {
+            azimuthMil: azMil,
+            pitchMil: pitchMil,
+            pitchRad: pitchRad,
+            rollRad: rollRad
+        };
+    }
+
+    /**
      * キャリブレーションの実行
      */
     function applyCalibration(targetBearingMil) {
@@ -138,6 +174,7 @@
     window.FTXAR_CALIBRATION = {
         startSensors: startSensors,
         getCameraQuaternion: getCameraQuaternion,
+        getAttitudeAngles: getAttitudeAngles,
         applyCalibration: applyCalibration,
         resetCalibration: resetCalibration,
         getState: function() { return attitudeState; }

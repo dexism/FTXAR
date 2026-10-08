@@ -51,6 +51,8 @@ html, body {
     object-fit: cover;
     z-index: 1;
     background-color: #06110a;
+    transform-origin: center center;
+    transition: transform 0.25s ease-out;
 }
 
 #ar-canvas {
@@ -563,7 +565,6 @@ html, body {
                 <button class="hud-btn active" id="btn-toggle-reticle" onclick="window.FTXAR_UI.toggleReticle()">レティクル</button>
                 <button class="hud-btn" onclick="window.FTXAR_UI.openQRModal()">QR</button>
                 <button class="hud-btn stream-error" id="btn-start-camera" onclick="window.FTXAR_UI.requestCamera()">📷 カメラ</button>
-                <button class="hud-btn" id="btn-external-open" onclick="window.FTXAR_UI.openExternalWindow()" title="ブラウザの別タブで直接開く">外部起動</button>
             </div>
         </div>
 
@@ -572,7 +573,6 @@ html, body {
             <div id="camera-banner-text">カメラのアクセスを待機中...</div>
             <div class="banner-actions">
                 <button class="banner-btn" onclick="window.FTXAR_UI.requestCamera()">📷 再試行</button>
-                <button class="banner-btn" onclick="window.FTXAR_UI.openExternalWindow()">別タブで直接開く</button>
             </div>
         </div>
 
@@ -2793,6 +2793,42 @@ html, body {
     }
 
     /**
+     * カメラ姿勢から正確な方位(Azimuth)、仰角(Pitch)、および傾き(Roll)を取得
+     */
+    function getAttitudeAngles() {
+        if (typeof THREE === 'undefined') {
+            return { azimuthMil: 0, pitchMil: 0, pitchRad: 0, rollRad: 0 };
+        }
+        var q = getCameraQuaternion();
+        if (!q) {
+            return { azimuthMil: 0, pitchMil: 0, pitchRad: 0, rollRad: 0 };
+        }
+
+        var vForward = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+        var vRight = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
+        var vUp = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+
+        // 1. 方位角 (0 - 6400 mil)
+        var azRad = Math.atan2(vForward.x, -vForward.z);
+        if (azRad < 0) azRad += 2.0 * Math.PI;
+        var azMil = Math.round(azRad * (6400.0 / (2.0 * Math.PI))) % 6400;
+
+        // 2. 仰角 (Pitch)
+        var pitchRad = Math.asin(Math.max(-1, Math.min(1, vForward.y)));
+        var pitchMil = Math.round(pitchRad * (6400.0 / (2.0 * Math.PI)));
+
+        // 3. 画面の傾き (Roll) - 水平線を保つためのロール角
+        var rollRad = Math.atan2(vRight.y, vUp.y);
+
+        return {
+            azimuthMil: azMil,
+            pitchMil: pitchMil,
+            pitchRad: pitchRad,
+            rollRad: rollRad
+        };
+    }
+
+    /**
      * キャリブレーションの実行
      */
     function applyCalibration(targetBearingMil) {
@@ -2825,6 +2861,7 @@ html, body {
     window.FTXAR_CALIBRATION = {
         startSensors: startSensors,
         getCameraQuaternion: getCameraQuaternion,
+        getAttitudeAngles: getAttitudeAngles,
         applyCalibration: applyCalibration,
         resetCalibration: resetCalibration,
         getState: function() { return attitudeState; }
@@ -2879,8 +2916,11 @@ html, body {
 
     /**
      * レティクルの描画 (毎フレーム呼出)
+     * @param {number} cameraFovDeg カメラ垂直画角 (度)
+     * @param {number} pitchRad 仰角ピッチ (ラジアン, 上向き正)
+     * @param {number} rollRad 画面の傾きロール (ラジアン, 時計回り正)
      */
-    function drawReticle(cameraFovDeg) {
+    function drawReticle(cameraFovDeg, pitchRad, rollRad) {
         if (!reticleState.isVisible || !reticleState.ctx || !reticleState.canvas) return;
 
         var ctx = reticleState.ctx;
@@ -2893,88 +2933,209 @@ html, body {
 
         ctx.clearRect(0, 0, w, h);
 
-        var fovDeg = (cameraFovDeg || reticleState.baseFovDeg);
+        var pRad = (typeof pitchRad === 'number') ? pitchRad : 0;
+        var rRad = (typeof rollRad === 'number') ? rollRad : 0;
+
+        // 垂直視野角 (FOV)
+        var fovDeg = (cameraFovDeg || (reticleState.baseFovDeg / reticleState.currentZoom));
         var fovRad = (fovDeg * Math.PI) / 180.0;
 
         // 1ミルあたりのピクセル幅 (Angular True-Scale)
+        // Three.js カメラ PerspectiveCamera と 1:1 に完全一致
         var milRad = (2.0 * Math.PI) / 6400.0;
-        var pxPerMil = ((h / 2.0) / Math.tan(fovRad / 2.0)) * Math.tan(milRad) * reticleState.currentZoom;
+        var pxPerMil = ((h / 2.0) / Math.tan(fovRad / 2.0)) * Math.tan(milRad);
+
+        // 仰角ミル値
+        var pitchMil = Math.round(pRad * (6400.0 / (2.0 * Math.PI)));
 
         ctx.save();
+
+        // ----------------------------------------------------
+        // ★ 画面中央を原点とし、実世界の水平線に合わせて傾ける (-rollRad 回転)
+        // ----------------------------------------------------
+        ctx.translate(cx, cy);
+        ctx.rotate(-rRad);
+
         ctx.strokeStyle = '#00ff88'; // 軍用蛍光グリーン
         ctx.fillStyle = '#00ff88';
         ctx.font = Math.round(11 * dpr) + "px 'Roboto Mono', monospace, sans-serif";
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
         ctx.lineWidth = 1.5 * dpr;
 
-        // 1. 中央十字微小ドット
+        // ====================================================
+        // 1. 水平線 (Artificial Horizon: 仰角 0 ミル基準線)
+        // ====================================================
+        // カメラが上を向く (pitchMil > 0) と水平線は画面中心より下に現れる (+y 方向)
+        var yHorizon = pitchMil * pxPerMil;
+        var maxVisibleY = Math.sqrt(cx * cx + cy * cy); // 回転時にも切れない最大対角線半径
+
+        if (Math.abs(yHorizon) < maxVisibleY) {
+            ctx.save();
+            ctx.strokeStyle = '#00ff88';
+            ctx.lineWidth = 2.2 * dpr;
+
+            var horizonHalfWidth = Math.min(w * 0.45, 320 * dpr);
+            var centerGap = 35 * dpr; // 照準中央を邪魔しないギャップ
+            var tickDown = 9 * dpr;   // 地面側(下側)を示すインジケーター爪
+
+            // 左側水平線
+            ctx.beginPath();
+            ctx.moveTo(-horizonHalfWidth, yHorizon);
+            ctx.lineTo(-centerGap, yHorizon);
+            // 左側下向き爪
+            ctx.moveTo(-horizonHalfWidth, yHorizon);
+            ctx.lineTo(-horizonHalfWidth, yHorizon + tickDown);
+            ctx.stroke();
+
+            // 右側水平線
+            ctx.beginPath();
+            ctx.moveTo(centerGap, yHorizon);
+            ctx.lineTo(horizonHalfWidth, yHorizon);
+            // 右側下向き爪
+            ctx.moveTo(horizonHalfWidth, yHorizon);
+            ctx.lineTo(horizonHalfWidth, yHorizon + tickDown);
+            ctx.stroke();
+
+            // 水平線端の「0」ラベル (水平基準 0 mil)
+            ctx.font = "bold " + Math.round(11 * dpr) + "px 'Roboto Mono', monospace, sans-serif";
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';
+            ctx.fillText("0", -horizonHalfWidth - 6 * dpr, yHorizon);
+            ctx.textAlign = 'left';
+            ctx.fillText("0", horizonHalfWidth + 6 * dpr, yHorizon);
+
+            ctx.restore();
+        }
+
+        // ====================================================
+        // 2. ピッチラダー (仰角補助目盛線: ±50, ±100, ±200 mil)
+        // ====================================================
+        var ladderMils = [-200, -100, -50, 50, 100, 200];
+        ctx.save();
+        ctx.lineWidth = 1.2 * dpr;
+        ctx.strokeStyle = 'rgba(0, 255, 136, 0.7)';
+        ctx.fillStyle = 'rgba(0, 255, 136, 0.85)';
+        ctx.font = Math.round(9 * dpr) + "px 'Roboto Mono', monospace, sans-serif";
+
+        for (var li = 0; li < ladderMils.length; li++) {
+            var lMil = ladderMils[li];
+            var ly = yHorizon - (lMil * pxPerMil);
+            if (Math.abs(ly) > maxVisibleY) continue;
+
+            var barW = (Math.abs(lMil) >= 100) ? 50 * dpr : 30 * dpr;
+            var gapW = 30 * dpr;
+
+            // 負の仰角(地下側)は破線、正の仰角(空側)は実線
+            if (lMil < 0) {
+                ctx.setLineDash([4 * dpr, 3 * dpr]);
+            } else {
+                ctx.setLineDash([]);
+            }
+
+            // 左バー
+            ctx.beginPath();
+            ctx.moveTo(-barW - gapW, ly);
+            ctx.lineTo(-gapW, ly);
+            ctx.stroke();
+
+            // 右バー
+            ctx.beginPath();
+            ctx.moveTo(gapW, ly);
+            ctx.lineTo(barW + gapW, ly);
+            ctx.stroke();
+
+            ctx.setLineDash([]);
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';
+            var signStr = (lMil > 0) ? "+" : "";
+            ctx.fillText(signStr + lMil, -barW - gapW - 4 * dpr, ly);
+            ctx.textAlign = 'left';
+            ctx.fillText(signStr + lMil, barW + gapW + 4 * dpr, ly);
+        }
+        ctx.restore();
+
+        // ====================================================
+        // 3. 中央視準レティクル (光軸中心 x=0, y=0 基準)
+        // ====================================================
+        // A. 中央照準点 (外径5pxの微小サークル + 中心微小ドット)
         ctx.beginPath();
-        ctx.arc(cx, cy, 2.5 * dpr, 0, Math.PI * 2);
+        ctx.arc(0, 0, 4.5 * dpr, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(0, 0, 1.2 * dpr, 0, Math.PI * 2);
         ctx.fill();
 
-        // 2. 水平軸の10ミル目盛線描画 (±250ミルまで)
+        // B. 水平軸の 10 ミル目盛線 (±250ミルまで, 水平線と完全平行)
         var maxMil = 250;
         for (var m = -maxMil; m <= maxMil; m += 10) {
             if (m === 0) continue;
-            var x = cx + (m * pxPerMil);
-            if (x < 0 || x > w) continue;
+            var x = m * pxPerMil;
+            if (Math.abs(x) > maxVisibleY) continue;
 
-            var tickLen = 6 * dpr;   // 10ミル小目盛
+            var tickLen = 5 * dpr;   // 10ミル小目盛
             var is50 = (m % 50 === 0);
             var is100 = (m % 100 === 0);
 
             if (is100) {
-                tickLen = 16 * dpr;  // 100ミル大目盛
+                tickLen = 14 * dpr;  // 100ミル大目盛
             } else if (is50) {
-                tickLen = 11 * dpr;  // 50ミル中目盛
+                tickLen = 9 * dpr;   // 50ミル中目盛
             }
 
             ctx.beginPath();
-            ctx.moveTo(x, cy - tickLen);
-            ctx.lineTo(x, cy + tickLen);
+            ctx.moveTo(x, -tickLen);
+            ctx.lineTo(x, tickLen);
             ctx.stroke();
 
             // 100ミルごとの数値ラベル
             if (is100) {
                 var label = Math.abs(m).toString();
-                ctx.fillText(label, x, cy + tickLen + 12 * dpr);
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'top';
+                ctx.fillText(label, x, tickLen + 4 * dpr);
             }
         }
 
-        // 3. 垂直軸の10ミル目盛線描画 (±250ミルまで)
+        // C. 垂直軸の 10 ミル目盛線 (±250ミルまで, 重力鉛直方向と完全平行)
         for (var m2 = -maxMil; m2 <= maxMil; m2 += 10) {
             if (m2 === 0) continue;
-            var y = cy - (m2 * pxPerMil);
-            if (y < 0 || y > h) continue;
+            var y = -m2 * pxPerMil; // 上が正の仰角
+            if (Math.abs(y) > maxVisibleY) continue;
 
-            var tickLen2 = 6 * dpr;
+            var tickLen2 = 5 * dpr;
             var is50_2 = (m2 % 50 === 0);
             var is100_2 = (m2 % 100 === 0);
 
             if (is100_2) {
-                tickLen2 = 16 * dpr;
+                tickLen2 = 14 * dpr;
             } else if (is50_2) {
-                tickLen2 = 11 * dpr;
+                tickLen2 = 9 * dpr;
             }
 
             ctx.beginPath();
-            ctx.moveTo(cx - tickLen2, y);
-            ctx.lineTo(cx + tickLen2, y);
+            ctx.moveTo(-tickLen2, y);
+            ctx.lineTo(tickLen2, y);
             ctx.stroke();
 
             // 100ミルごとの数値ラベル
             if (is100_2) {
                 var label2 = Math.abs(m2).toString();
                 ctx.textAlign = 'left';
-                ctx.fillText(label2, cx + tickLen2 + 5 * dpr, y);
+                ctx.textBaseline = 'middle';
+                ctx.fillText(label2, tickLen2 + 5 * dpr, y);
             }
         }
 
-        // 4. 右上に現在のズーム倍率と目盛単位の表示
-        ctx.textAlign = 'right';
-        ctx.fillText("RETICLE: 10 MIL / TICK  [" + reticleState.currentZoom.toFixed(1) + "x]", w - 20 * dpr, 45 * dpr);
+        ctx.restore(); // -rollRad 回転の解除
 
+        // ====================================================
+        // 4. 画面固定情報 (右上ステータス)
+        // ====================================================
+        ctx.save();
+        ctx.fillStyle = '#00ff88';
+        ctx.font = Math.round(11 * dpr) + "px 'Roboto Mono', monospace, sans-serif";
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillText("RETICLE: 10 MIL / TICK  [" + reticleState.currentZoom.toFixed(1) + "x]", w - 20 * dpr, 48 * dpr);
         ctx.restore();
     }
 
@@ -2986,7 +3147,7 @@ html, body {
         if (!reticleState.isVisible && reticleState.ctx && reticleState.canvas) {
             reticleState.ctx.clearRect(0, 0, reticleState.canvas.width, reticleState.canvas.height);
         } else {
-            drawReticle(reticleState.baseFovDeg);
+            drawReticle(reticleState.baseFovDeg, 0, 0);
         }
         return reticleState.isVisible;
     }
@@ -2996,7 +3157,7 @@ html, body {
      */
     function setZoom(zoomLevel) {
         reticleState.currentZoom = Math.max(1.0, Math.min(10.0, zoomLevel));
-        drawReticle(reticleState.baseFovDeg);
+        drawReticle(reticleState.baseFovDeg / reticleState.currentZoom, 0, 0);
         return reticleState.currentZoom;
     }
 
@@ -3081,6 +3242,20 @@ html, body {
                 if (window.FTXAR_RETICLE) {
                     window.FTXAR_RETICLE.setZoom(level);
                 }
+
+                // ★ カメラ実写映像のズーム連動 (CSS Transform Scale & Hardware Zoom)
+                var videoEl = appState.videoElement || document.getElementById('camera-video');
+                if (videoEl) {
+                    videoEl.style.transform = (level === 1.0) ? 'none' : 'scale(' + level + ')';
+                }
+                if (appState.videoTrack && typeof appState.videoTrack.getCapabilities === 'function') {
+                    var caps = appState.videoTrack.getCapabilities();
+                    if (caps && caps.zoom) {
+                        var targetZoom = Math.min(Math.max(level, caps.zoom.min), caps.zoom.max);
+                        appState.videoTrack.applyConstraints({ advanced: [{ zoom: targetZoom }] }).catch(function(e) {});
+                    }
+                }
+
                 var btns = document.querySelectorAll('.zoom-btn');
                 for (var i = 0; i < btns.length; i++) {
                     btns[i].classList.remove('active');
@@ -3335,10 +3510,6 @@ html, body {
                     console.warn("Calibration permission error on start:", e);
                 }
             },
-            openExternalWindow: function() {
-                var curUrl = window.location.href;
-                window.open(curUrl, '_blank');
-            },
             requestCamera: function() {
                 requestCameraStream();
             }
@@ -3407,10 +3578,20 @@ html, body {
                 navigator.mediaDevices.getUserMedia(constraintsList[index])
                     .then(function(stream) {
                         video.srcObject = stream;
+                        var tracks = stream.getVideoTracks();
+                        if (tracks && tracks.length > 0) {
+                            appState.videoTrack = tracks[0];
+                        }
+
                         video.onloadedmetadata = function() {
                             video.play().catch(function(e) { console.warn("Video play err:", e); });
                         };
                         video.play().catch(function(e) {});
+
+                        // 現在のズーム状態を反映
+                        if (appState.currentZoom && appState.currentZoom !== 1.0) {
+                            video.style.transform = 'scale(' + appState.currentZoom + ')';
+                        }
 
                         appState.hasCameraStream = true;
                         updateCameraStatusUI(true, null);
@@ -3785,9 +3966,16 @@ html, body {
                 appState.renderer.render(appState.scene, appState.camera);
             }
 
-            // E. レティクル再描画
+            // E. レティクル再描画 (水平線基準の傾きロール＆仰角ピッチ連動)
             if (window.FTXAR_RETICLE) {
-                window.FTXAR_RETICLE.drawReticle(appState.camera ? appState.camera.fov : appState.baseFovDeg);
+                var att = (window.FTXAR_CALIBRATION && window.FTXAR_CALIBRATION.getAttitudeAngles)
+                    ? window.FTXAR_CALIBRATION.getAttitudeAngles()
+                    : { pitchRad: 0, rollRad: 0 };
+                window.FTXAR_RETICLE.drawReticle(
+                    appState.camera ? appState.camera.fov : appState.baseFovDeg,
+                    att.pitchRad,
+                    att.rollRad
+                );
             }
         }
 
